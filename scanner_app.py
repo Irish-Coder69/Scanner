@@ -36,6 +36,7 @@ WIA_DOCUMENT_HANDLING_STATUS_PROPERTY = 3087
 WIA_DOCUMENT_HANDLING_SELECT_PROPERTY = 3088
 WIA_DPS_FEEDER = 1
 WIA_DPS_FLATBED = 2
+DEFAULT_UPDATE_MANIFEST_URL = "https://api.github.com/repos/Irish-Coder69/Scanner/releases/latest"
 
 
 def load_version_info() -> dict[str, str]:
@@ -84,7 +85,7 @@ def load_version_info() -> dict[str, str]:
 
 _VERSION_INFO = load_version_info()
 APP_VERSION = _VERSION_INFO["version"]
-UPDATE_MANIFEST_URL = os.environ.get("DOC_SCANNER_UPDATE_URL", _VERSION_INFO["update_manifest_url"]).strip()
+UPDATE_MANIFEST_URL = os.environ.get("DOC_SCANNER_UPDATE_URL", _VERSION_INFO["update_manifest_url"]).strip() or DEFAULT_UPDATE_MANIFEST_URL
 
 
 class ScannerRecord(TypedDict):
