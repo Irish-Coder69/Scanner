@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.request
 import urllib.parse
+import webbrowser
 from pathlib import Path
 import sys
 import tkinter as tk
@@ -218,6 +219,36 @@ def _choose_latest_version_text(manifest: dict[str, Any]) -> str:
             return cleaned
 
     return ""
+
+
+def _choose_download_url(manifest: dict[str, Any]) -> str:
+    """
+    Pick the best download target from supported manifest formats.
+    """
+    custom_url = str(manifest.get("download_url", "")).strip()
+    if custom_url:
+        return custom_url
+
+    assets = manifest.get("assets")
+    if isinstance(assets, list):
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            name = str(asset.get("name", "")).strip().lower()
+            browser_url = str(asset.get("browser_download_url", "")).strip()
+            if not browser_url:
+                continue
+            if name == "installer.exe":
+                return browser_url
+
+        # Fallback to the first downloadable asset URL.
+        for asset in assets:
+            if isinstance(asset, dict):
+                browser_url = str(asset.get("browser_download_url", "")).strip()
+                if browser_url:
+                    return browser_url
+
+    return str(manifest.get("html_url", "")).strip()
 
 
 def _read_prop_value(props: Any, property_id: int) -> int | None:
@@ -524,9 +555,7 @@ class ScannerApp(tk.Tk):
                 # GitHub Releases API response ({"tag_name": "vX.Y.Z"}).
                 latest_version = _choose_latest_version_text(manifest)
 
-                download_url = str(manifest.get("download_url", "")).strip()
-                if not download_url:
-                    download_url = str(manifest.get("html_url", "")).strip()
+                download_url = _choose_download_url(manifest)
 
                 notes = str(manifest.get("notes", "")).strip()
                 if not notes:
@@ -567,7 +596,21 @@ class ScannerApp(tk.Tk):
                 message.append(f"\nRelease notes:\n{notes}")
             if download_url:
                 message.append(f"\nDownload: {download_url}")
-            messagebox.showinfo("Update Available", "\n".join(message))
+                should_download = messagebox.askyesno(
+                    "Update Available",
+                    "\n".join(message) + "\n\nOpen download page now?",
+                )
+                if should_download:
+                    try:
+                        webbrowser.open(download_url)
+                    except Exception:
+                        messagebox.showwarning(
+                            "Update Available",
+                            "Could not open your browser automatically.\n"
+                            f"Use this link:\n{download_url}",
+                        )
+            else:
+                messagebox.showinfo("Update Available", "\n".join(message))
         else:
             self.status_var.set("Application is up to date.")
             if not silent:
