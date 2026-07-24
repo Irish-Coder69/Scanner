@@ -433,12 +433,32 @@ class ScannerApp(tk.Tk):
 
         def _worker() -> None:
             try:
-                with urllib.request.urlopen(UPDATE_MANIFEST_URL, timeout=8) as response:
+                request = urllib.request.Request(
+                    UPDATE_MANIFEST_URL,
+                    headers={
+                        "User-Agent": "DocumentScanner",
+                        "Accept": "application/json",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=8) as response:
                     payload = response.read().decode("utf-8")
                 manifest = json.loads(payload)
+
+                # Supports both a custom manifest ({"version": "x.y.z"}) and
+                # GitHub Releases API response ({"tag_name": "vX.Y.Z"}).
                 latest_version = str(manifest.get("version", "")).strip()
+                if not latest_version:
+                    latest_version = str(manifest.get("tag_name", "")).strip()
+                    if latest_version.lower().startswith("v"):
+                        latest_version = latest_version[1:]
+
                 download_url = str(manifest.get("download_url", "")).strip()
+                if not download_url:
+                    download_url = str(manifest.get("html_url", "")).strip()
+
                 notes = str(manifest.get("notes", "")).strip()
+                if not notes:
+                    notes = str(manifest.get("body", "")).strip()
 
                 if not latest_version:
                     raise RuntimeError("Update manifest did not include a version.")
