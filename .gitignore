@@ -1,0 +1,20 @@
+# Python cache and virtualenv
+__pycache__/
+*.py[cod]
+.venv/
+
+# Build outputs
+build/
+dist/
+dist_new/
+installer_output/
+
+# Logs and temp outputs
+*.log
+pyi_tail.log
+pyinstaller_build.log
+
+# Editor and OS files
+.vscode/
+.DS_Store
+Thumbs.db

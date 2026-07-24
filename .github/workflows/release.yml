@@ -1,0 +1,77 @@
+name: Build And Release Installer
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Validate release tag matches version.json
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $tag = "${{ github.ref_name }}"
+          if ($tag -ne "v$version") {
+            Write-Error "Tag $tag does not match version.json v$version"
+            exit 1
+          }
+
+      - name: Build scanner icon and EXE
+        shell: pwsh
+        run: |
+          python -c "from scanner_app import create_default_icon; create_default_icon('scanner_icon.ico', overwrite=True)"
+          python -m PyInstaller --onefile --windowed --icon=scanner_icon.ico --name "Document Scanner" scanner_app.py
+
+      - name: Sync installer version from version.json
+        shell: pwsh
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $iss = Get-Content installer.iss -Raw
+          $iss = [regex]::Replace($iss, '(?m)^AppVersion=.*$', "AppVersion=$version")
+          Set-Content installer.iss $iss -Encoding UTF8
+
+      - name: Build installer with Inno Setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
+        with:
+          path: installer.iss
+
+      - name: Normalize installer filename
+        shell: pwsh
+        run: |
+          Copy-Item "installer_output\DocumentScannerSetup.exe" "installer_output\installer.exe" -Force
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: installer_output/installer.exe
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer_output/installer.exe
+          generate_release_notes: true
