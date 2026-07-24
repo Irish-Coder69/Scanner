@@ -1,11 +1,13 @@
 import json
 import os
 import queue
+import re
 import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 from pathlib import Path
 import sys
 import tkinter as tk
@@ -178,14 +180,44 @@ def is_busy_error(exc: Exception) -> bool:
     return "device is busy" in error_text or "wia device is busy" in error_text or "-2145320954" in error_text
 
 
-def _version_tuple(version_text: str) -> tuple[int, ...]:
-    parts: list[int] = []
-    for piece in version_text.strip().split("."):
-        try:
-            parts.append(int(piece))
-        except Exception:
-            break
-    return tuple(parts) if parts else (0,)
+def _extract_semver(version_text: str) -> tuple[int, int, int]:
+    """
+    Extract a comparable semantic version triplet from free-form text.
+    Examples handled: "1.2.3", "v1.2.3", "release-1.2.3-beta".
+    """
+    text = version_text.strip()
+    if not text:
+        return (0, 0, 0)
+
+    match = re.search(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", text)
+    if not match:
+        return (0, 0, 0)
+
+    major = int(match.group(1) or 0)
+    minor = int(match.group(2) or 0)
+    patch = int(match.group(3) or 0)
+    return (major, minor, patch)
+
+
+def _choose_latest_version_text(manifest: dict[str, Any]) -> str:
+    """
+    Read version text from supported endpoints.
+    Priority: explicit custom manifest version, then GitHub tag, then release name.
+    """
+    candidates = [
+        str(manifest.get("version", "")).strip(),
+        str(manifest.get("tag_name", "")).strip(),
+        str(manifest.get("name", "")).strip(),
+    ]
+
+    for raw in candidates:
+        if not raw:
+            continue
+        cleaned = raw[1:] if raw.lower().startswith("v") else raw
+        if _extract_semver(cleaned) != (0, 0, 0):
+            return cleaned
+
+    return ""
 
 
 def _read_prop_value(props: Any, property_id: int) -> int | None:
@@ -468,11 +500,20 @@ class ScannerApp(tk.Tk):
 
         def _worker() -> None:
             try:
+                parsed_url = urllib.parse.urlparse(UPDATE_MANIFEST_URL)
+                query_items = urllib.parse.parse_qsl(parsed_url.query, keep_blank_values=True)
+                query_items.append(("_ts", str(int(time.time()))))
+                fresh_url = urllib.parse.urlunparse(
+                    parsed_url._replace(query=urllib.parse.urlencode(query_items))
+                )
+
                 request = urllib.request.Request(
-                    UPDATE_MANIFEST_URL,
+                    fresh_url,
                     headers={
                         "User-Agent": "DocumentScanner",
                         "Accept": "application/json",
+                        "Cache-Control": "no-cache",
+                        "Pragma": "no-cache",
                     },
                 )
                 with urllib.request.urlopen(request, timeout=8) as response:
@@ -481,11 +522,7 @@ class ScannerApp(tk.Tk):
 
                 # Supports both a custom manifest ({"version": "x.y.z"}) and
                 # GitHub Releases API response ({"tag_name": "vX.Y.Z"}).
-                latest_version = str(manifest.get("version", "")).strip()
-                if not latest_version:
-                    latest_version = str(manifest.get("tag_name", "")).strip()
-                    if latest_version.lower().startswith("v"):
-                        latest_version = latest_version[1:]
+                latest_version = _choose_latest_version_text(manifest)
 
                 download_url = str(manifest.get("download_url", "")).strip()
                 if not download_url:
@@ -498,7 +535,7 @@ class ScannerApp(tk.Tk):
                 if not latest_version:
                     raise RuntimeError("Update manifest did not include a version.")
 
-                has_update = _version_tuple(latest_version) > _version_tuple(APP_VERSION)
+                has_update = _extract_semver(latest_version) > _extract_semver(APP_VERSION)
                 self.after(0, lambda: self._handle_update_result(silent, has_update, latest_version, download_url, notes, None))
             except Exception as exc:
                 self.after(0, lambda: self._handle_update_result(silent, False, "", "", "", exc))
@@ -534,7 +571,10 @@ class ScannerApp(tk.Tk):
         else:
             self.status_var.set("Application is up to date.")
             if not silent:
-                messagebox.showinfo("Check for Updates", f"You are up to date (version {APP_VERSION}).")
+                messagebox.showinfo(
+                    "Check for Updates",
+                    f"You are up to date (version {APP_VERSION}).\nLatest available: {latest_version or APP_VERSION}",
+                )
 
     def setup_style(self) -> None:
         style = ttk.Style(self)
