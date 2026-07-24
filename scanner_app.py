@@ -316,7 +316,14 @@ def create_default_icon(path: str = "scanner_icon.ico", overwrite: bool = True) 
     draw.ellipse((86, 88, 116, 118), fill=(46, 110, 194, 255))
     draw.ellipse((122, 88, 152, 118), fill=(46, 110, 194, 255))
 
-    img.save(icon_path, format="ICO", sizes=[(256, 256), (128, 128), (64, 64), (32, 32), (16, 16)])
+    try:
+        img.save(icon_path, format="ICO", sizes=[(256, 256), (128, 128), (64, 64), (32, 32), (16, 16)])
+    except PermissionError:
+        # Startup should continue even if icon file is locked or read-only.
+        return
+    except OSError:
+        # Some environments deny writes to the working folder; icon generation is optional.
+        return
 
 
 class ScannerApp(tk.Tk):
@@ -1718,6 +1725,6 @@ class ScannerApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    create_default_icon("scanner_icon.ico")
+    create_default_icon("scanner_icon.ico", overwrite=False)
     app = ScannerApp()
     app.mainloop()
