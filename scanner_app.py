@@ -101,6 +101,7 @@ class SettingsData(TypedDict, total=False):
     folder: str
     format: str
     dpi: int
+    pages: int
 
 
 ScanResult = tuple[Literal["ok", "cancelled", "error"], str | Exception | None]
@@ -301,6 +302,10 @@ def load_settings() -> SettingsData:
                 if isinstance(dpi, int):
                     settings["dpi"] = dpi
 
+                pages = raw_map.get("pages")
+                if isinstance(pages, int):
+                    settings["pages"] = pages
+
                 return settings
     except Exception:
         pass
@@ -384,6 +389,12 @@ class ScannerApp(tk.Tk):
         if saved_dpi > 1200:
             saved_dpi = 1200
         self.dpi_var = tk.StringVar(value=str(saved_dpi))
+        saved_pages = int(_cfg.get("pages", 1))
+        if saved_pages < 1:
+            saved_pages = 1
+        if saved_pages > 100:
+            saved_pages = 100
+        self.pages_var = tk.StringVar(value=str(saved_pages))
 
         self.model_var = tk.StringVar(value="N/A")
         self.connection_var = tk.StringVar(value="N/A")
@@ -406,6 +417,7 @@ class ScannerApp(tk.Tk):
         self.folder_var.trace_add("write", self._on_setting_change)
         self.format_var.trace_add("write", self._on_setting_change)
         self.dpi_var.trace_add("write", self._on_setting_change)
+        self.pages_var.trace_add("write", self._on_setting_change)
 
         # Save on normal window close
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -640,7 +652,16 @@ class ScannerApp(tk.Tk):
             width=10,
         ).grid(row=6, column=0, sticky="w", padx=12, pady=(0, 4))
 
-        ttk.Label(settings, text="Source:").grid(row=7, column=0, sticky="w", padx=6, pady=(10, 4))
+        ttk.Label(settings, text="Pages to Scan:").grid(row=7, column=0, sticky="w", padx=6, pady=(10, 4))
+        ttk.Combobox(
+            settings,
+            textvariable=self.pages_var,
+            values=[str(page) for page in range(1, 101)],
+            state="readonly",
+            width=10,
+        ).grid(row=8, column=0, sticky="w", padx=12, pady=(0, 4))
+
+        ttk.Label(settings, text="Source:").grid(row=9, column=0, sticky="w", padx=6, pady=(10, 4))
         self.source_combo = ttk.Combobox(
             settings,
             textvariable=self.scan_source_var,
@@ -648,7 +669,7 @@ class ScannerApp(tk.Tk):
             state="readonly",
             width=12,
         )
-        self.source_combo.grid(row=8, column=0, sticky="w", padx=12, pady=(0, 4))
+        self.source_combo.grid(row=10, column=0, sticky="w", padx=12, pady=(0, 4))
 
         actions = ttk.Frame(left_col)
         actions.grid(row=8, column=1, sticky="w", padx=6, pady=(14, 10))
@@ -1098,14 +1119,31 @@ class ScannerApp(tk.Tk):
     # ------------------------------------------------------------------
 
     def _start_threaded_image_scan(self, folder: "Path", filename: str, save_type: str) -> None:
+        self._start_threaded_image_batch_scan(folder, filename, save_type, 1)
+
+    def _start_threaded_image_batch_scan(self, folder: "Path", filename: str, save_type: str, total_pages: int) -> None:
+        saved_paths: list[Path] = []
+        self._start_threaded_image_page_scan(folder, filename, save_type, 1, total_pages, saved_paths)
+
+    def _start_threaded_image_page_scan(
+        self,
+        folder: "Path",
+        filename: str,
+        save_type: str,
+        page_num: int,
+        total_pages: int,
+        saved_paths: list[Path],
+    ) -> None:
         extension = "jpg" if save_type == "JPG" else save_type.lower()
-        final_path = get_unique_path(folder / f"{filename}.{extension}")
+        page_suffix = f"_p{page_num}" if total_pages > 1 else ""
+        final_path = get_unique_path(folder / f"{filename}{page_suffix}.{extension}")
         requested_format = WIA_FORMAT_JPG if save_type == "JPG" else WIA_FORMAT_PNG
         dpi_snap = self.get_selected_dpi()
         quality_snap = self.scan_quality_var.get()
         source_snap = self.scan_source_var.get()
         result_q: queue.Queue[ScanResult] = queue.Queue()
-        self.status_var.set("Scanning document...")
+        self.status_var.set(f"Scanning page {page_num} of {total_pages}...")
+        self.dialog_status_var.set(f"Scanning page {page_num} of {total_pages}...")
         self._start_progress_ticks(self._estimate_scan_duration())
         t = threading.Thread(
             target=self._wia_acquire_thread,
@@ -1113,19 +1151,47 @@ class ScannerApp(tk.Tk):
             daemon=True,
         )
         t.start()
-        self.after(100, lambda: self._poll_image_save(result_q, final_path, save_type, filename))
+        self.after(
+            100,
+            lambda: self._poll_image_page_save(
+                result_q,
+                final_path,
+                save_type,
+                filename,
+                page_num,
+                total_pages,
+                saved_paths,
+                folder,
+            ),
+        )
 
-    def _poll_image_save(
+    def _poll_image_page_save(
         self,
         result_q: queue.Queue[ScanResult],
         final_path: "Path",
         save_type: str,
         filename: str,
+        page_num: int,
+        total_pages: int,
+        saved_paths: list[Path],
+        folder: Path,
     ) -> None:
         try:
             status, value = result_q.get_nowait()
         except queue.Empty:
-            self.after(100, lambda: self._poll_image_save(result_q, final_path, save_type, filename))
+            self.after(
+                100,
+                lambda: self._poll_image_page_save(
+                    result_q,
+                    final_path,
+                    save_type,
+                    filename,
+                    page_num,
+                    total_pages,
+                    saved_paths,
+                    folder,
+                ),
+            )
             return
 
         if self._scan_cancel_requested or status == "cancelled":
@@ -1180,12 +1246,7 @@ class ScannerApp(tk.Tk):
                     pil_img.save(str(final_path), "JPEG", quality=95)
                 else:
                     pil_img.save(str(final_path), "PNG")
-                self.filename_var.set("")
-                self.status_var.set(f"Saved successfully: {final_path}")
-                self.dialog_status_var.set(f"Scan saved successfully: {final_path.name}")
-                self.update_dialog_stage("saved")
-                messagebox.showinfo("Success", f"Document saved to:\n{final_path}")
-                self.after(50, lambda: self.filename_entry.focus_set())
+                saved_paths.append(final_path)
             except Exception as exc:
                 self.status_var.set("Failed to save scan.")
                 messagebox.showerror("Save Error", f"Scan succeeded but could not be saved.\n\n{exc}")
@@ -1195,6 +1256,28 @@ class ScannerApp(tk.Tk):
                         os.remove(temp_path)
                     except Exception:
                         pass
+
+            if len(saved_paths) == page_num and page_num < total_pages:
+                self._start_threaded_image_page_scan(folder, filename, save_type, page_num + 1, total_pages, saved_paths)
+                return
+
+            if len(saved_paths) == total_pages:
+                self.filename_var.set("")
+                if total_pages == 1:
+                    self.status_var.set(f"Saved successfully: {saved_paths[0]}")
+                    self.dialog_status_var.set(f"Scan saved successfully: {saved_paths[0].name}")
+                    messagebox.showinfo("Success", f"Document saved to:\n{saved_paths[0]}")
+                else:
+                    self.status_var.set(f"Saved {total_pages} pages to {folder}")
+                    self.dialog_status_var.set(f"Saved {total_pages} pages successfully.")
+                    preview_list = "\n".join(str(path.name) for path in saved_paths[:10])
+                    more = f"\n...and {total_pages - 10} more" if total_pages > 10 else ""
+                    messagebox.showinfo(
+                        "Success",
+                        f"Saved {total_pages} pages to:\n{folder}\n\n{preview_list}{more}",
+                    )
+                self.update_dialog_stage("saved")
+                self.after(50, lambda: self.filename_entry.focus_set())
         if self.ready_var.get() in {"Scanning...", "Busy"}:
             self.ready_var.set("Ready")
         self.set_scanning_state(False)
@@ -1284,14 +1367,14 @@ class ScannerApp(tk.Tk):
             self.ready_var.set("Ready")
         self.set_scanning_state(False)
 
-    def _start_threaded_pdf_scan(self, folder: Path, filename: str) -> None:
+    def _start_threaded_pdf_scan(self, folder: Path, filename: str, total_pages: int) -> None:
         final_path = get_unique_path(folder / f"{filename}.pdf")
         if Image is None:
             raise RuntimeError("Pillow is required to build PDFs.")
 
         pages: list[Any] = []
         temp_files: list[str] = []
-        self._start_threaded_pdf_page_scan(final_path, pages, temp_files, 1)
+        self._start_threaded_pdf_page_scan(final_path, pages, temp_files, 1, total_pages)
 
     def _start_threaded_pdf_page_scan(
         self,
@@ -1299,13 +1382,14 @@ class ScannerApp(tk.Tk):
         pages: list[Any],
         temp_files: list[str],
         page_num: int,
+        total_pages: int,
     ) -> None:
         dpi_snap = self.get_selected_dpi()
         quality_snap = self.scan_quality_var.get()
         source_snap = self.scan_source_var.get()
         result_q: queue.Queue[ScanResult] = queue.Queue()
-        self.status_var.set(f"Scanning page {page_num}...")
-        self.dialog_status_var.set(f"Scanning page {page_num} for PDF...")
+        self.status_var.set(f"Scanning page {page_num} of {total_pages}...")
+        self.dialog_status_var.set(f"Scanning page {page_num} of {total_pages} for PDF...")
         self._start_progress_ticks(self._estimate_scan_duration())
         worker = threading.Thread(
             target=self._wia_acquire_thread,
@@ -1313,7 +1397,7 @@ class ScannerApp(tk.Tk):
             daemon=True,
         )
         worker.start()
-        self.after(100, lambda: self._poll_pdf_page_result(result_q, final_path, pages, temp_files, page_num))
+        self.after(100, lambda: self._poll_pdf_page_result(result_q, final_path, pages, temp_files, page_num, total_pages))
 
     def _poll_pdf_page_result(
         self,
@@ -1322,11 +1406,12 @@ class ScannerApp(tk.Tk):
         pages: list[Any],
         temp_files: list[str],
         page_num: int,
+        total_pages: int,
     ) -> None:
         try:
             status, value = result_q.get_nowait()
         except queue.Empty:
-            self.after(100, lambda: self._poll_pdf_page_result(result_q, final_path, pages, temp_files, page_num))
+            self.after(100, lambda: self._poll_pdf_page_result(result_q, final_path, pages, temp_files, page_num, total_pages))
             return
 
         if self._scan_cancel_requested or status == "cancelled":
@@ -1399,8 +1484,8 @@ class ScannerApp(tk.Tk):
             self.set_scanning_state(False)
             return
 
-        if messagebox.askyesno("Scan Another Page", "Would you like to scan another page?"):
-            self._start_threaded_pdf_page_scan(final_path, pages, temp_files, page_num + 1)
+        if page_num < total_pages:
+            self._start_threaded_pdf_page_scan(final_path, pages, temp_files, page_num + 1, total_pages)
             return
 
         self._finish_pdf_scan(final_path, pages, temp_files)
@@ -1434,7 +1519,7 @@ class ScannerApp(tk.Tk):
             self._complete_progress()
             self.filename_var.set("")
             self.status_var.set(f"Saved successfully: {final_path}")
-            self.dialog_status_var.set(f"PDF saved successfully: {final_path.name}")
+            self.dialog_status_var.set(f"PDF saved successfully: {final_path.name} ({len(pages)} page(s))")
             self.update_dialog_stage("saved")
             messagebox.showinfo("Success", f"PDF saved to:\n{final_path}")
             self.after(50, lambda: self.filename_entry.focus_set())
@@ -1450,6 +1535,12 @@ class ScannerApp(tk.Tk):
             return min(1200, max(100, int(self.dpi_var.get())))
         except Exception:
             return 300
+
+    def get_selected_pages(self) -> int:
+        try:
+            return min(100, max(1, int(self.pages_var.get())))
+        except Exception:
+            return 1
 
     def apply_scan_settings(self, item: Any) -> None:
         dpi_value = self.get_selected_dpi()
@@ -1662,6 +1753,7 @@ class ScannerApp(tk.Tk):
             "folder": self.folder_var.get(),
             "format": self.format_var.get(),
             "dpi": self.get_selected_dpi(),
+            "pages": self.get_selected_pages(),
         })
 
     def _on_close(self) -> None:
@@ -1669,6 +1761,7 @@ class ScannerApp(tk.Tk):
             "folder": self.folder_var.get(),
             "format": self.format_var.get(),
             "dpi": self.get_selected_dpi(),
+            "pages": self.get_selected_pages(),
         })
         self.destroy()
 
@@ -1709,6 +1802,7 @@ class ScannerApp(tk.Tk):
         folder_text = self.folder_var.get().strip()
         filename = sanitize_filename(self.filename_var.get())
         save_type = self.format_var.get().upper()
+        pages_to_scan = self.get_selected_pages()
 
         if self.scanner_var.get() == "No scanner detected":
             messagebox.showwarning("Scanner not found", "No scanner was detected.")
@@ -1728,14 +1822,14 @@ class ScannerApp(tk.Tk):
         self.ready_var.set("Scanning...")
         self.update_dialog_stage("opening")
         self.set_scanning_state(True, "Opening scanner...")
-        self.after(50, lambda: self._do_scan(folder, filename, save_type))
+        self.after(50, lambda: self._do_scan(folder, filename, save_type, pages_to_scan))
 
-    def _do_scan(self, folder: Path, filename: str, save_type: str):
+    def _do_scan(self, folder: Path, filename: str, save_type: str, pages_to_scan: int):
         if save_type == "PDF":
-            self._start_threaded_pdf_scan(folder, filename)
+            self._start_threaded_pdf_scan(folder, filename, pages_to_scan)
         else:
             # Single image scan — runs in background thread with live progress
-            self._start_threaded_image_scan(folder, filename, save_type)
+            self._start_threaded_image_batch_scan(folder, filename, save_type, pages_to_scan)
 
     def scan_image(self, folder: Path, filename: str, save_type: str):
         extension = "jpg" if save_type == "JPG" else save_type.lower()
