@@ -1,6 +1,6 @@
 [Setup]
 AppName=Document Scanner
-AppVersion=1.0.6
+AppVersion=1.0.7
 DefaultDirName={autopf}\Document Scanner
 DefaultGroupName=Document Scanner
 OutputDir=installer_output
@@ -8,10 +8,26 @@ OutputBaseFilename=DocumentScannerSetup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+CloseApplications=no
+
+[Code]
+procedure CloseRunningScanner;
+var
+	ResultCode: Integer;
+begin
+	Exec(ExpandConstant('{cmd}'), '/C taskkill /IM "Document Scanner.exe" /F /T >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+	if CurStep = ssInstall then
+		CloseRunningScanner;
+end;
 
 [Files]
 Source: "dist\Document Scanner.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scanner_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "version.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked

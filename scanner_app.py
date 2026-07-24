@@ -43,18 +43,40 @@ def load_version_info() -> dict[str, str]:
         "version": "1.0.0",
         "update_manifest_url": "",
     }
-    version_file = Path(__file__).with_name("version.json")
+    candidate_paths: list[Path] = []
+
+    # Installed onefile EXE: keep version.json next to the executable.
+    if getattr(sys, "frozen", False):
+        try:
+            candidate_paths.append(Path(sys.executable).with_name("version.json"))
+        except Exception:
+            pass
+
+    # Source/dev mode fallback.
+    candidate_paths.append(Path(__file__).with_name("version.json"))
+
+    # PyInstaller extraction fallback when bundled with --add-data.
+    meipass = getattr(sys, "_MEIPASS", "")
+    if isinstance(meipass, str) and meipass:
+        candidate_paths.append(Path(meipass) / "version.json")
+
     try:
-        if version_file.exists():
+        for version_file in candidate_paths:
+            if not version_file.exists():
+                continue
+
             with open(version_file, "r", encoding="utf-8") as handle:
                 raw = json.load(handle)
-            if isinstance(raw, dict):
-                version = str(raw.get("version", "")).strip()
-                update_manifest_url = str(raw.get("update_manifest_url", "")).strip()
-                if version:
-                    default_info["version"] = version
-                if update_manifest_url:
-                    default_info["update_manifest_url"] = update_manifest_url
+            if not isinstance(raw, dict):
+                continue
+
+            version = str(raw.get("version", "")).strip()
+            update_manifest_url = str(raw.get("update_manifest_url", "")).strip()
+            if version:
+                default_info["version"] = version
+            if update_manifest_url:
+                default_info["update_manifest_url"] = update_manifest_url
+            break
     except Exception:
         pass
     return default_info
@@ -401,12 +423,12 @@ class ScannerApp(tk.Tk):
         menubar = tk.Menu(self)
 
         file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Check for Updates", command=lambda: self.check_for_updates(silent=False))
         file_menu.add_command(label="Refresh Scanner", command=self.detect_scanner)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
         help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Check for Updates", command=lambda: self.check_for_updates(silent=False))
         help_menu.add_command(label="About", command=self.show_about)
 
         menubar.add_cascade(label="File", menu=file_menu)
