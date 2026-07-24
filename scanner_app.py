@@ -712,16 +712,16 @@ class ScannerApp(tk.Tk):
         self.source_combo.grid(row=10, column=0, sticky="w", padx=12, pady=(0, 4))
 
         actions = ttk.Frame(left_col)
-        actions.grid(row=8, column=1, sticky="w", padx=6, pady=(14, 10))
+        actions.grid(row=8, column=1, sticky="w", padx=(2, 6), pady=(8, 10))
 
         self.scan_button = ttk.Button(actions, text="Scan Document", command=self.scan_document)
-        self.scan_button.grid(row=0, column=0, padx=(0, 10))
+        self.scan_button.grid(row=0, column=0, padx=(0, 8), pady=(0, 2))
         self.preview_button = ttk.Button(actions, text="Scan Preview", command=self.scan_preview)
-        self.preview_button.grid(row=0, column=1, padx=(0, 10))
+        self.preview_button.grid(row=0, column=1, padx=(0, 8), pady=(0, 2))
         self.clear_button = ttk.Button(actions, text="Clear Name", command=self.clear_name)
-        self.clear_button.grid(row=0, column=2, padx=(0, 10))
+        self.clear_button.grid(row=0, column=2, padx=(0, 8), pady=(0, 2))
         self.close_button = ttk.Button(actions, text="Close", command=self._on_close)
-        self.close_button.grid(row=0, column=3)
+        self.close_button.grid(row=0, column=3, pady=(0, 2))
 
         ttk.Separator(left_col, orient="horizontal").grid(row=9, column=0, columnspan=3, sticky="ew", pady=10)
 
