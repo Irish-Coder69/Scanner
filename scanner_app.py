@@ -896,7 +896,7 @@ class ScannerApp(tk.Tk):
             desired_flag = WIA_DPS_FEEDER
         elif source == "Auto":
             adf_supported, adf_ready = detect_adf_capability(device)
-            if adf_supported and adf_ready:
+            if adf_supported:
                 desired_flag = WIA_DPS_FEEDER
 
         try:
@@ -913,6 +913,35 @@ class ScannerApp(tk.Tk):
                     continue
         except Exception:
             pass
+
+    def _select_wia_item(self, device: Any, source: str) -> Any | None:
+        try:
+            item_count = int(device.Items.Count)
+        except Exception:
+            return None
+
+        if item_count < 1:
+            return None
+
+        preferred_indices = list(range(1, item_count + 1))
+        if source in {"ADF", "Auto"}:
+            preferred_indices = [2, 1] + [index for index in preferred_indices if index not in {1, 2}]
+
+        for index in preferred_indices:
+            try:
+                return device.Items[index]
+            except Exception:
+                continue
+
+        return None
+
+    def _should_use_feeder(self, device: Any, source: str) -> bool:
+        if source == "ADF":
+            return True
+        if source == "Auto":
+            adf_supported, _ = detect_adf_capability(device)
+            return adf_supported
+        return False
 
     def _wia_acquire_thread(
         self,
@@ -933,6 +962,7 @@ class ScannerApp(tk.Tk):
             "Black & White": WIA_INTENT_BLACKWHITE,
         }
         temp_name: str | None = None
+        device: Any | None = None
         try:
             if self._scan_cancel_requested:
                 result_q.put(("cancelled", None))
@@ -953,9 +983,9 @@ class ScannerApp(tk.Tk):
                         continue
                     device = info.Connect()
                     self._apply_scan_source_to_device(device, source)
-                    if int(device.Items.Count) < 1:
+                    item = self._select_wia_item(device, source)
+                    if item is None:
                         continue
-                    item = device.Items[1]
                     try:
                         for prop in item.Properties:
                             pid = int(prop.PropertyID)
@@ -976,6 +1006,8 @@ class ScannerApp(tk.Tk):
                 if self._scan_cancel_requested:
                     result_q.put(("cancelled", None))
                     return
+                if device is not None and self._should_use_feeder(device, source):
+                    raise
                 dialog = win32_client.Dispatch("WIA.CommonDialog")
                 image = dialog.ShowAcquireImage(
                     SCANNER_DEVICE_TYPE, 0, 0, requested_format, False, True, False,
@@ -1398,10 +1430,10 @@ class ScannerApp(tk.Tk):
                 continue
 
             device = info.Connect()
-            if int(device.Items.Count) < 1:
+            item = self._select_wia_item(device, self.scan_source_var.get())
+            if item is None:
                 continue
 
-            item = device.Items[1]
             self.apply_scan_settings(item)
             return item.Transfer(requested_format)
 
@@ -1522,13 +1554,11 @@ class ScannerApp(tk.Tk):
                 state = "Ready" if first["adf_ready"] else "Available (no pages loaded)"
                 self.adf_var.set(state)
                 self.source_combo.configure(values=["Auto", "Flatbed", "ADF"], state="readonly")
-                if self.scan_source_var.get() not in {"Auto", "Flatbed", "ADF"}:
-                    self.scan_source_var.set("Auto")
+                self.scan_source_var.set("ADF")
             else:
                 self.adf_var.set("Not available")
                 self.source_combo.configure(values=["Auto", "Flatbed"], state="readonly")
-                if self.scan_source_var.get() == "ADF":
-                    self.scan_source_var.set("Flatbed")
+                self.scan_source_var.set("Flatbed")
             self.status_var.set("Scanner detected and ready.")
             self.dialog_status_var.set("Scanner ready. Click Scan Document to open the scan dialog.")
             self.update_dialog_stage("ready")
