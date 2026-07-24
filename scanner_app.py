@@ -925,7 +925,8 @@ class ScannerApp(tk.Tk):
                     if int(getattr(prop, "PropertyID", -1)) == WIA_DOCUMENT_HANDLING_SELECT_PROPERTY:
                         current_value = int(prop.Value)
                         if desired_flag == WIA_DPS_FEEDER:
-                            prop.Value = current_value | WIA_DPS_FEEDER
+                            # Force feeder mode by setting FEEDER and clearing FLATBED.
+                            prop.Value = (current_value | WIA_DPS_FEEDER) & ~WIA_DPS_FLATBED
                         else:
                             prop.Value = (current_value | WIA_DPS_FLATBED) & ~WIA_DPS_FEEDER
                         break
@@ -1131,6 +1132,12 @@ class ScannerApp(tk.Tk):
                     "Scanner Busy",
                     "The scanner is busy.\n\nClose any other scan app or scanner window, wait a few seconds, and try again.",
                 )
+            elif self.scan_source_var.get() == "ADF":
+                messagebox.showerror(
+                    "ADF Scan Error",
+                    "Unable to scan from ADF.\n\n"
+                    "Please confirm paper is loaded in the feeder and the scanner driver is set to feeder mode, then try again.",
+                )
             else:
                 messagebox.showerror("Scan Error", f"Unable to complete the scan.\n\n{exc}")
         elif status == "ok":
@@ -1324,6 +1331,12 @@ class ScannerApp(tk.Tk):
                 messagebox.showerror(
                     "Scanner Busy",
                     "The scanner is busy.\n\nPlease close Epson Scan or any other scan window, wait a few seconds, and try again.",
+                )
+            elif self.scan_source_var.get() == "ADF":
+                messagebox.showerror(
+                    "ADF Scan Error",
+                    "Unable to scan from ADF.\n\n"
+                    "Please confirm paper is loaded in the feeder and the scanner driver is set to feeder mode, then try again.",
                 )
             else:
                 messagebox.showerror("Scan Error", f"Unable to complete the scan.\n\n{exc}")
