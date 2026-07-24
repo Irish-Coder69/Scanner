@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Literal, TypedDict, cast
@@ -298,6 +299,11 @@ def save_settings(data: SettingsData) -> None:
 
 def create_default_icon(path: str = "scanner_icon.ico", overwrite: bool = True) -> None:
     if Image is None or ImageDraw is None:
+        return
+
+    # Packaged builds already carry an embedded icon and may run from folders
+    # where writing scanner_icon.ico is blocked.
+    if getattr(sys, "frozen", False):
         return
 
     icon_path = Path(path)
@@ -1725,6 +1731,10 @@ class ScannerApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    create_default_icon("scanner_icon.ico", overwrite=False)
+    try:
+        create_default_icon("scanner_icon.ico", overwrite=False)
+    except Exception:
+        # Icon generation is optional and must never block app startup.
+        pass
     app = ScannerApp()
     app.mainloop()
