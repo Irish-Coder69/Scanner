@@ -45,6 +45,35 @@ jobs:
           python -c "from scanner_app import create_default_icon; create_default_icon('scanner_icon.ico', overwrite=True)"
           python -m PyInstaller --onefile --windowed --icon=scanner_icon.ico --name "Document Scanner" scanner_app.py
 
+      - name: Prepare code-signing certificate
+        shell: pwsh
+        run: |
+          $certB64 = "${{ secrets.CODE_SIGN_CERT_BASE64 }}"
+          $certPassword = "${{ secrets.CODE_SIGN_CERT_PASSWORD }}"
+          if ([string]::IsNullOrWhiteSpace($certB64) -or [string]::IsNullOrWhiteSpace($certPassword)) {
+            Write-Host "Code-signing secrets not configured; skipping signing steps."
+            return
+          }
+          $certBytes = [System.Convert]::FromBase64String($certB64)
+          [System.IO.File]::WriteAllBytes("$env:RUNNER_TEMP\codesign.pfx", $certBytes)
+          Set-Content -Path "$env:RUNNER_TEMP\codesign.pass" -Value $certPassword -NoNewline -Encoding UTF8
+
+      - name: Sign EXE
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:RUNNER_TEMP\codesign.pfx")) {
+            Write-Host "No code-signing certificate found; skipping EXE signing."
+            return
+          }
+          $certPassword = Get-Content "$env:RUNNER_TEMP\codesign.pass" -Raw
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) {
+            throw "signtool.exe not found on runner"
+          }
+          & $signtool sign /f "$env:RUNNER_TEMP\codesign.pfx" /p "$certPassword" /fd SHA256 /tr "http://timestamp.digicert.com" /td SHA256 "dist\Document Scanner.exe"
+
       - name: Sync installer version from version.json
         shell: pwsh
         run: |
@@ -62,6 +91,32 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item "installer_output\DocumentScannerSetup.exe" "installer_output\installer.exe" -Force
+
+      - name: Sign installer
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:RUNNER_TEMP\codesign.pfx")) {
+            Write-Host "No code-signing certificate found; skipping installer signing."
+            return
+          }
+          $certPassword = Get-Content "$env:RUNNER_TEMP\codesign.pass" -Raw
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) {
+            throw "signtool.exe not found on runner"
+          }
+          & $signtool sign /f "$env:RUNNER_TEMP\codesign.pfx" /p "$certPassword" /fd SHA256 /tr "http://timestamp.digicert.com" /td SHA256 "installer_output\installer.exe"
+
+      - name: Verify signatures
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:RUNNER_TEMP\codesign.pfx")) {
+            Write-Host "No code-signing certificate found; skipping signature verification."
+            return
+          }
+          Get-AuthenticodeSignature "dist\Document Scanner.exe" | Format-List Status,SignerCertificate,TimeStamperCertificate
+          Get-AuthenticodeSignature "installer_output\installer.exe" | Format-List Status,SignerCertificate,TimeStamperCertificate
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
