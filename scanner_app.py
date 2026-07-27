@@ -1043,7 +1043,8 @@ class ScannerApp(tk.Tk):
             desired_flag = WIA_DPS_FEEDER
         elif source == "Auto":
             adf_supported, adf_ready = detect_adf_capability(device)
-            if adf_supported:
+            # Auto should only force feeder when pages are actually available.
+            if adf_supported and adf_ready:
                 desired_flag = WIA_DPS_FEEDER
 
         try:
@@ -1072,8 +1073,14 @@ class ScannerApp(tk.Tk):
             return None
 
         preferred_indices = list(range(1, item_count + 1))
-        if source in {"ADF", "Auto"}:
+        if source == "ADF":
             preferred_indices = [2, 1] + [index for index in preferred_indices if index not in {1, 2}]
+        elif source == "Auto":
+            adf_supported, adf_ready = detect_adf_capability(device)
+            if adf_supported and adf_ready:
+                preferred_indices = [2, 1] + [index for index in preferred_indices if index not in {1, 2}]
+            else:
+                preferred_indices = [1, 2] + [index for index in preferred_indices if index not in {1, 2}]
 
         for index in preferred_indices:
             try:
@@ -1087,16 +1094,16 @@ class ScannerApp(tk.Tk):
         if source == "ADF":
             return True
         if source == "Auto":
-            adf_supported, _ = detect_adf_capability(device)
-            return adf_supported
+            adf_supported, adf_ready = detect_adf_capability(device)
+            return adf_supported and adf_ready
         return False
 
     def _get_page_transition_delay_ms(self) -> int:
         source = self.scan_source_var.get()
         if source == "ADF":
-            return 1200
+            return 2000
         if source == "Auto":
-            return 800
+            return 1200
         return 250
 
     def _wia_acquire_thread(
@@ -1132,7 +1139,7 @@ class ScannerApp(tk.Tk):
             pythoncom_module = cast(Any, pythoncom)
             win32_client = cast(Any, win32com.client)
             pythoncom_module.CoInitialize()
-            attempts = 3
+            attempts = 6
             for attempt in range(1, attempts + 1):
                 if self._scan_cancel_requested:
                     result = ("cancelled", None)
@@ -1173,7 +1180,7 @@ class ScannerApp(tk.Tk):
                     should_retry = is_busy and attempt < attempts
 
                     if should_retry:
-                        time.sleep(0.8 * attempt)
+                        time.sleep(1.0 * attempt)
                         continue
 
                     if device is not None and self._should_use_feeder(device, source):
