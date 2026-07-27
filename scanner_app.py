@@ -1177,13 +1177,21 @@ class ScannerApp(tk.Tk):
                         break
 
                     is_busy = is_busy_error(direct_exc)
-                    should_retry = is_busy and attempt < attempts
+                    feeder_requested = source == "ADF"
+                    feeder_mode = feeder_requested
+                    if device is not None:
+                        feeder_mode = self._should_use_feeder(device, source)
+
+                    # ADF drivers can throw transient transfer faults mid-feed.
+                    # Retry feeder scans even when the driver does not classify the error as "busy".
+                    should_retry = attempt < attempts and (is_busy or feeder_mode)
 
                     if should_retry:
-                        time.sleep(1.0 * attempt)
+                        wait_seconds = 1.0 * attempt if is_busy else 1.5 * attempt
+                        time.sleep(wait_seconds)
                         continue
 
-                    if device is not None and self._should_use_feeder(device, source):
+                    if feeder_mode:
                         raise
 
                     dialog = win32_client.Dispatch("WIA.CommonDialog")
