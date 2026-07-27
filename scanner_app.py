@@ -1091,6 +1091,14 @@ class ScannerApp(tk.Tk):
             return adf_supported
         return False
 
+    def _get_page_transition_delay_ms(self) -> int:
+        source = self.scan_source_var.get()
+        if source == "ADF":
+            return 1200
+        if source == "Auto":
+            return 800
+        return 250
+
     def _wia_acquire_thread(
         self,
         result_q: queue.Queue[ScanResult],
@@ -1107,95 +1115,118 @@ class ScannerApp(tk.Tk):
         quality_map = {
             "Color": WIA_INTENT_COLOR,
             "Grayscale": WIA_INTENT_GRAYSCALE,
+            "BlackWhite": WIA_INTENT_BLACKWHITE,
             "Black & White": WIA_INTENT_BLACKWHITE,
         }
         temp_name: str | None = None
-        device: Any | None = None
+        result: ScanResult = ("error", RuntimeError("Scan failed."))
         try:
             if self._scan_cancel_requested:
-                result_q.put(("cancelled", None))
+                result = ("cancelled", None)
                 return
 
             if pythoncom is None or win32com is None:
-                result_q.put(("error", RuntimeError("Scanning components are not installed.")))
+                result = ("error", RuntimeError("Scanning components are not installed."))
                 return
 
             pythoncom_module = cast(Any, pythoncom)
             win32_client = cast(Any, win32com.client)
             pythoncom_module.CoInitialize()
-            image = None
-            try:
-                manager = win32_client.Dispatch("WIA.DeviceManager")
-                for info in manager.DeviceInfos:
-                    if int(info.Type) != SCANNER_DEVICE_TYPE:
-                        continue
-                    device = info.Connect()
-                    self._apply_scan_source_to_device(device, source)
-                    item = self._select_wia_item(device, source)
-                    if item is None:
-                        continue
-                    try:
-                        for prop in item.Properties:
-                            pid = int(prop.PropertyID)
-                            if pid in {WIA_HORIZONTAL_DPI_PROPERTY, WIA_VERTICAL_DPI_PROPERTY}:
-                                prop.Value = dpi
-                            elif pid == WIA_CURRENT_INTENT_PROPERTY and quality in quality_map:
-                                prop.Value = quality_map[quality]
-                    except Exception:
-                        pass
-                    image = item.Transfer(requested_format)
-                    if self._scan_cancel_requested:
-                        result_q.put(("cancelled", None))
-                        return
-                    break
-                if image is None:
-                    raise RuntimeError("No scanner item found.")
-            except Exception:
+            attempts = 3
+            for attempt in range(1, attempts + 1):
                 if self._scan_cancel_requested:
-                    result_q.put(("cancelled", None))
-                    return
-                if device is not None and self._should_use_feeder(device, source):
-                    raise
-                dialog = win32_client.Dispatch("WIA.CommonDialog")
-                image = dialog.ShowAcquireImage(
-                    SCANNER_DEVICE_TYPE, 0, 0, requested_format, False, True, False,
-                )
-            if self._scan_cancel_requested:
-                result_q.put(("cancelled", None))
-                return
-            if image is None:
-                result_q.put(("cancelled", None))
-                return
-            temp_name = make_wia_safe_temp_path(".png")
-            if self._scan_cancel_requested:
-                result_q.put(("cancelled", None))
-                return
-            image.SaveFile(temp_name)
-            if self._scan_cancel_requested:
-                if os.path.exists(temp_name):
-                    try:
-                        os.remove(temp_name)
-                    except Exception:
-                        pass
-                result_q.put(("cancelled", None))
-                return
-            result_q.put(("ok", temp_name))
+                    result = ("cancelled", None)
+                    break
+
+                image = None
+                device: Any | None = None
+                try:
+                    manager = win32_client.Dispatch("WIA.DeviceManager")
+                    for info in manager.DeviceInfos:
+                        if int(info.Type) != SCANNER_DEVICE_TYPE:
+                            continue
+                        device = info.Connect()
+                        self._apply_scan_source_to_device(device, source)
+                        item = self._select_wia_item(device, source)
+                        if item is None:
+                            continue
+                        try:
+                            for prop in item.Properties:
+                                pid = int(prop.PropertyID)
+                                if pid in {WIA_HORIZONTAL_DPI_PROPERTY, WIA_VERTICAL_DPI_PROPERTY}:
+                                    prop.Value = dpi
+                                elif pid == WIA_CURRENT_INTENT_PROPERTY and quality in quality_map:
+                                    prop.Value = quality_map[quality]
+                        except Exception:
+                            pass
+                        image = item.Transfer(requested_format)
+                        break
+
+                    if image is None:
+                        raise RuntimeError("No scanner item found.")
+                except Exception as direct_exc:
+                    if self._scan_cancel_requested:
+                        result = ("cancelled", None)
+                        break
+
+                    is_busy = is_busy_error(direct_exc)
+                    should_retry = is_busy and attempt < attempts
+
+                    if should_retry:
+                        time.sleep(0.8 * attempt)
+                        continue
+
+                    if device is not None and self._should_use_feeder(device, source):
+                        raise
+
+                    dialog = win32_client.Dispatch("WIA.CommonDialog")
+                    image = dialog.ShowAcquireImage(
+                        SCANNER_DEVICE_TYPE, 0, 0, requested_format, False, True, False,
+                    )
+
+                if self._scan_cancel_requested:
+                    result = ("cancelled", None)
+                    break
+
+                if image is None:
+                    result = ("cancelled", None)
+                    break
+
+                temp_name = make_wia_safe_temp_path(".png")
+                image.SaveFile(temp_name)
+
+                if self._scan_cancel_requested:
+                    if os.path.exists(temp_name):
+                        try:
+                            os.remove(temp_name)
+                        except Exception:
+                            pass
+                    result = ("cancelled", None)
+                    break
+
+                result = ("ok", temp_name)
+                temp_name = None
+                break
+
+            if result[0] == "error" and isinstance(result[1], Exception) and str(result[1]) == "Scan failed.":
+                result = ("error", RuntimeError("Unable to communicate with the scanner."))
         except Exception as exc:
             if self._scan_cancel_requested:
-                result_q.put(("cancelled", None))
-                return
+                result = ("cancelled", None)
+            else:
+                result = ("error", exc)
             if temp_name and os.path.exists(temp_name):
                 try:
                     os.remove(temp_name)
                 except Exception:
                     pass
-            result_q.put(("error", exc))
         finally:
             try:
                 if pythoncom is not None:
                     cast(Any, pythoncom).CoUninitialize()
             except Exception:
                 pass
+            result_q.put(result)
 
     # ------------------------------------------------------------------
     # Threaded image scan helpers
@@ -1341,7 +1372,19 @@ class ScannerApp(tk.Tk):
                         pass
 
             if len(saved_paths) == page_num and page_num < total_pages:
-                self._start_threaded_image_page_scan(folder, filename, save_type, page_num + 1, total_pages, saved_paths)
+                next_page = page_num + 1
+                delay_ms = self._get_page_transition_delay_ms()
+                self.after(
+                    delay_ms,
+                    lambda: self._start_threaded_image_page_scan(
+                        folder,
+                        filename,
+                        save_type,
+                        next_page,
+                        total_pages,
+                        saved_paths,
+                    ),
+                )
                 return
 
             if len(saved_paths) == total_pages:
@@ -1568,7 +1611,12 @@ class ScannerApp(tk.Tk):
             return
 
         if page_num < total_pages:
-            self._start_threaded_pdf_page_scan(final_path, pages, temp_files, page_num + 1, total_pages)
+            next_page = page_num + 1
+            delay_ms = self._get_page_transition_delay_ms()
+            self.after(
+                delay_ms,
+                lambda: self._start_threaded_pdf_page_scan(final_path, pages, temp_files, next_page, total_pages),
+            )
             return
 
         self._finish_pdf_scan(final_path, pages, temp_files)
