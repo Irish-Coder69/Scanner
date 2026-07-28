@@ -1523,9 +1523,10 @@ class ScannerApp(tk.Tk):
 
                 if remaining_pages > 0:
                     continue_scan = messagebox.askyesno(
-                        "Load More Pages",
-                        f"The feeder is empty, but {remaining_pages} page(s) are still requested.\n\n"
-                        "Load more pages in the ADF and click Yes to continue scanning.",
+                        "Scan More Pages?",
+                        "The feeder is empty.\n\n"
+                        "Click Yes to load more pages and continue scanning.\n"
+                        "Click No to save the pages already scanned.",
                     )
                     if continue_scan:
                         self.status_var.set(f"Waiting for more pages. Continuing with page {page_num}...")
@@ -1828,9 +1829,10 @@ class ScannerApp(tk.Tk):
 
                 if remaining_pages > 0:
                     continue_scan = messagebox.askyesno(
-                        "Load More Pages",
-                        f"The feeder is empty, but {remaining_pages} page(s) are still requested.\n\n"
-                        "Load more pages in the ADF and click Yes to continue scanning.",
+                        "Scan More Pages?",
+                        "The feeder is empty.\n\n"
+                        "Click Yes to load more pages and continue scanning.\n"
+                        "Click No to save the pages already scanned.",
                     )
                     if continue_scan:
                         self.status_var.set(f"Waiting for more pages. Continuing with page {page_num}...")
