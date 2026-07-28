@@ -439,6 +439,8 @@ def create_default_icon(path: str = "scanner_icon.ico", overwrite: bool = True) 
 
 
 class ScannerApp(tk.Tk):
+    _MAX_ADF_EMPTY_RETRIES = 5
+
     def __init__(self):
         super().__init__()
         self.title("Document Scanner")
@@ -1515,11 +1517,15 @@ class ScannerApp(tk.Tk):
             if is_adf_empty_error(exc) and active_source in {"ADF", "ADF_LOCKED", "Auto"}:
                 scanned_pages = len(saved_paths)
                 remaining_pages = total_pages - scanned_pages
-                if remaining_pages > 0 and empty_retry_count < 2:
+                if remaining_pages > 0 and empty_retry_count < self._MAX_ADF_EMPTY_RETRIES:
                     retry_num = empty_retry_count + 1
-                    self.status_var.set(f"ADF temporarily empty while reading page {page_num}. Retrying ({retry_num}/2)...")
-                    self.dialog_status_var.set(f"Retrying page {page_num} after feeder-empty response ({retry_num}/2)...")
-                    delay_ms = max(2000, self._get_page_transition_delay_ms())
+                    self.status_var.set(
+                        f"Waiting for page {page_num} to feed from ADF... (retry {retry_num}/{self._MAX_ADF_EMPTY_RETRIES})"
+                    )
+                    self.dialog_status_var.set(
+                        f"ADF reported empty while waiting for page {page_num}. Retrying automatically ({retry_num}/{self._MAX_ADF_EMPTY_RETRIES})..."
+                    )
+                    delay_ms = max(2500, self._get_page_transition_delay_ms() + (retry_num * 750))
                     self.after(
                         delay_ms,
                         lambda: self._start_threaded_image_page_scan(
@@ -1824,11 +1830,15 @@ class ScannerApp(tk.Tk):
             if is_adf_empty_error(exc) and active_source in {"ADF", "ADF_LOCKED", "Auto"}:
                 scanned_pages = len(pages)
                 remaining_pages = total_pages - scanned_pages
-                if remaining_pages > 0 and empty_retry_count < 2:
+                if remaining_pages > 0 and empty_retry_count < self._MAX_ADF_EMPTY_RETRIES:
                     retry_num = empty_retry_count + 1
-                    self.status_var.set(f"ADF temporarily empty while reading page {page_num}. Retrying ({retry_num}/2)...")
-                    self.dialog_status_var.set(f"Retrying PDF page {page_num} after feeder-empty response ({retry_num}/2)...")
-                    delay_ms = max(2000, self._get_page_transition_delay_ms())
+                    self.status_var.set(
+                        f"Waiting for page {page_num} to feed from ADF... (retry {retry_num}/{self._MAX_ADF_EMPTY_RETRIES})"
+                    )
+                    self.dialog_status_var.set(
+                        f"ADF reported empty while waiting for PDF page {page_num}. Retrying automatically ({retry_num}/{self._MAX_ADF_EMPTY_RETRIES})..."
+                    )
+                    delay_ms = max(2500, self._get_page_transition_delay_ms() + (retry_num * 750))
                     self.after(
                         delay_ms,
                         lambda: self._start_threaded_pdf_page_scan(
