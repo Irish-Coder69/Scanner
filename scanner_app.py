@@ -783,21 +783,12 @@ class ScannerApp(tk.Tk):
     def _finish_update_download(self, target_path: Path, error: Exception | None, download_url: str) -> None:
         if error is not None:
             self.status_var.set("Update download failed.")
-            retry_in_browser = messagebox.askyesno(
+            messagebox.showwarning(
                 "Download Failed",
                 "Unable to download the installer directly.\n\n"
                 f"Error: {error}\n\n"
-                "Open the GitHub download page instead?",
+                "No browser page was opened. Please try again from Check for Updates.",
             )
-            if retry_in_browser:
-                try:
-                    webbrowser.open(download_url)
-                except Exception:
-                    messagebox.showwarning(
-                        "Download Failed",
-                        "Could not open your browser automatically.\n"
-                        f"Use this link:\n{download_url}",
-                    )
             return
 
         self.status_var.set(f"Update downloaded: {target_path.name}")
