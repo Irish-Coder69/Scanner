@@ -1428,6 +1428,7 @@ class ScannerApp(tk.Tk):
         saved_paths: list[Path],
         empty_retry_count: int = 0,
     ) -> None:
+        page_num = max(page_num, len(saved_paths) + 1)
         extension = "jpg" if save_type == "JPG" else save_type.lower()
         page_suffix = f"_p{page_num}" if total_pages > 1 else ""
         final_path = get_unique_path(folder / f"{filename}{page_suffix}.{extension}")
@@ -1510,7 +1511,8 @@ class ScannerApp(tk.Tk):
         self._complete_progress()
         if status == "error":
             exc = value if isinstance(value, Exception) else RuntimeError("Scan failed.")
-            if is_adf_empty_error(exc) and self.scan_source_var.get() in {"ADF", "Auto"}:
+            active_source = self._active_batch_source or self.scan_source_var.get()
+            if is_adf_empty_error(exc) and active_source in {"ADF", "ADF_LOCKED", "Auto"}:
                 scanned_pages = len(saved_paths)
                 remaining_pages = total_pages - scanned_pages
                 if remaining_pages > 0 and empty_retry_count < 2:
@@ -1629,7 +1631,7 @@ class ScannerApp(tk.Tk):
                         pass
 
             if len(saved_paths) == page_num and page_num < total_pages:
-                next_page = page_num + 1
+                next_page = len(saved_paths) + 1
                 delay_ms = self._get_page_transition_delay_ms()
                 self.after(
                     delay_ms,
@@ -1769,9 +1771,10 @@ class ScannerApp(tk.Tk):
         total_pages: int,
         empty_retry_count: int,
     ) -> None:
+        page_num = max(page_num, len(pages) + 1)
         dpi_snap = self.get_selected_dpi()
         quality_snap = self.scan_quality_var.get()
-        source_snap = self.scan_source_var.get()
+        source_snap = self._active_batch_source or self.scan_source_var.get()
         result_q: queue.Queue[ScanResult] = queue.Queue()
         self.status_var.set(f"Scanning page {page_num} of {total_pages}...")
         self.dialog_status_var.set(f"Scanning page {page_num} of {total_pages} for PDF...")
@@ -1817,7 +1820,8 @@ class ScannerApp(tk.Tk):
 
         if status == "error":
             exc = value if isinstance(value, Exception) else RuntimeError("PDF scan failed.")
-            if is_adf_empty_error(exc) and self.scan_source_var.get() in {"ADF", "Auto"}:
+            active_source = self._active_batch_source or self.scan_source_var.get()
+            if is_adf_empty_error(exc) and active_source in {"ADF", "ADF_LOCKED", "Auto"}:
                 scanned_pages = len(pages)
                 remaining_pages = total_pages - scanned_pages
                 if remaining_pages > 0 and empty_retry_count < 2:
@@ -1934,7 +1938,7 @@ class ScannerApp(tk.Tk):
             return
 
         if page_num < total_pages:
-            next_page = page_num + 1
+            next_page = len(pages) + 1
             delay_ms = self._get_page_transition_delay_ms()
             self.after(
                 delay_ms,
