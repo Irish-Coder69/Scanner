@@ -1368,6 +1368,7 @@ class ScannerApp(tk.Tk):
         page_num: int,
         total_pages: int,
         saved_paths: list[Path],
+        empty_retry_count: int = 0,
     ) -> None:
         extension = "jpg" if save_type == "JPG" else save_type.lower()
         page_suffix = f"_p{page_num}" if total_pages > 1 else ""
@@ -1397,6 +1398,7 @@ class ScannerApp(tk.Tk):
                 total_pages,
                 saved_paths,
                 folder,
+                empty_retry_count,
             ),
         )
 
@@ -1410,6 +1412,7 @@ class ScannerApp(tk.Tk):
         total_pages: int,
         saved_paths: list[Path],
         folder: Path,
+        empty_retry_count: int,
     ) -> None:
         try:
             status, value = result_q.get_nowait()
@@ -1425,6 +1428,7 @@ class ScannerApp(tk.Tk):
                     total_pages,
                     saved_paths,
                     folder,
+                    empty_retry_count,
                 ),
             )
             return
@@ -1449,8 +1453,28 @@ class ScannerApp(tk.Tk):
         if status == "error":
             exc = value if isinstance(value, Exception) else RuntimeError("Scan failed.")
             if is_adf_empty_error(exc) and self.scan_source_var.get() in {"ADF", "Auto"}:
+                scanned_pages = len(saved_paths)
+                remaining_pages = total_pages - scanned_pages
+                if remaining_pages > 0 and empty_retry_count < 2:
+                    retry_num = empty_retry_count + 1
+                    self.status_var.set(f"ADF temporarily empty while reading page {page_num}. Retrying ({retry_num}/2)...")
+                    self.dialog_status_var.set(f"Retrying page {page_num} after feeder-empty response ({retry_num}/2)...")
+                    delay_ms = max(2000, self._get_page_transition_delay_ms())
+                    self.after(
+                        delay_ms,
+                        lambda: self._start_threaded_image_page_scan(
+                            folder,
+                            filename,
+                            save_type,
+                            page_num,
+                            total_pages,
+                            saved_paths,
+                            retry_num,
+                        ),
+                    )
+                    return
+
                 if saved_paths:
-                    scanned_pages = len(saved_paths)
                     self.filename_var.set("")
                     self.status_var.set(f"ADF emptied after {scanned_pages} page(s). Saved scanned pages.")
                     self.dialog_status_var.set(f"ADF emptied. Saved {scanned_pages} page(s) successfully.")
@@ -1534,6 +1558,7 @@ class ScannerApp(tk.Tk):
                         next_page,
                         total_pages,
                         saved_paths,
+                        0,
                     ),
                 )
                 return
@@ -1651,7 +1676,7 @@ class ScannerApp(tk.Tk):
 
         pages: list[Any] = []
         temp_files: list[str] = []
-        self._start_threaded_pdf_page_scan(final_path, pages, temp_files, 1, total_pages)
+        self._start_threaded_pdf_page_scan(final_path, pages, temp_files, 1, total_pages, 0)
 
     def _start_threaded_pdf_page_scan(
         self,
@@ -1660,6 +1685,7 @@ class ScannerApp(tk.Tk):
         temp_files: list[str],
         page_num: int,
         total_pages: int,
+        empty_retry_count: int,
     ) -> None:
         dpi_snap = self.get_selected_dpi()
         quality_snap = self.scan_quality_var.get()
@@ -1674,7 +1700,7 @@ class ScannerApp(tk.Tk):
             daemon=True,
         )
         worker.start()
-        self.after(100, lambda: self._poll_pdf_page_result(result_q, final_path, pages, temp_files, page_num, total_pages))
+        self.after(100, lambda: self._poll_pdf_page_result(result_q, final_path, pages, temp_files, page_num, total_pages, empty_retry_count))
 
     def _poll_pdf_page_result(
         self,
@@ -1684,11 +1710,12 @@ class ScannerApp(tk.Tk):
         temp_files: list[str],
         page_num: int,
         total_pages: int,
+        empty_retry_count: int,
     ) -> None:
         try:
             status, value = result_q.get_nowait()
         except queue.Empty:
-            self.after(100, lambda: self._poll_pdf_page_result(result_q, final_path, pages, temp_files, page_num, total_pages))
+            self.after(100, lambda: self._poll_pdf_page_result(result_q, final_path, pages, temp_files, page_num, total_pages, empty_retry_count))
             return
 
         if self._scan_cancel_requested or status == "cancelled":
@@ -1709,6 +1736,26 @@ class ScannerApp(tk.Tk):
         if status == "error":
             exc = value if isinstance(value, Exception) else RuntimeError("PDF scan failed.")
             if is_adf_empty_error(exc) and self.scan_source_var.get() in {"ADF", "Auto"}:
+                scanned_pages = len(pages)
+                remaining_pages = total_pages - scanned_pages
+                if remaining_pages > 0 and empty_retry_count < 2:
+                    retry_num = empty_retry_count + 1
+                    self.status_var.set(f"ADF temporarily empty while reading page {page_num}. Retrying ({retry_num}/2)...")
+                    self.dialog_status_var.set(f"Retrying PDF page {page_num} after feeder-empty response ({retry_num}/2)...")
+                    delay_ms = max(2000, self._get_page_transition_delay_ms())
+                    self.after(
+                        delay_ms,
+                        lambda: self._start_threaded_pdf_page_scan(
+                            final_path,
+                            pages,
+                            temp_files,
+                            page_num,
+                            total_pages,
+                            retry_num,
+                        ),
+                    )
+                    return
+
                 if pages:
                     self.status_var.set("ADF emptied. Saving scanned PDF pages...")
                     self.dialog_status_var.set("ADF emptied. Finalizing PDF with scanned pages.")
@@ -1786,7 +1833,7 @@ class ScannerApp(tk.Tk):
             delay_ms = self._get_page_transition_delay_ms()
             self.after(
                 delay_ms,
-                lambda: self._start_threaded_pdf_page_scan(final_path, pages, temp_files, next_page, total_pages),
+                lambda: self._start_threaded_pdf_page_scan(final_path, pages, temp_files, next_page, total_pages, 0),
             )
             return
 
