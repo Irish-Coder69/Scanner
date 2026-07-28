@@ -727,20 +727,13 @@ class ScannerApp(tk.Tk):
             if notes:
                 message.append(f"\nRelease notes:\n{notes}")
             if download_url:
-                message.append(f"\nDownload: {download_url}")
+                message.append("\nThe installer can be downloaded directly in-app.")
                 should_download = messagebox.askyesno(
                     "Update Available",
-                    "\n".join(message) + "\n\nOpen download page now?",
+                    "\n".join(message) + "\n\nDownload installer now?",
                 )
                 if should_download:
-                    try:
-                        webbrowser.open(download_url)
-                    except Exception:
-                        messagebox.showwarning(
-                            "Update Available",
-                            "Could not open your browser automatically.\n"
-                            f"Use this link:\n{download_url}",
-                        )
+                    self._download_update_installer(download_url, latest_version)
             else:
                 messagebox.showinfo("Update Available", "\n".join(message))
         else:
@@ -750,6 +743,69 @@ class ScannerApp(tk.Tk):
                     "Check for Updates",
                     f"You are up to date (version {APP_VERSION}).\nLatest available: {latest_version or APP_VERSION}",
                 )
+
+    def _download_update_installer(self, download_url: str, latest_version: str) -> None:
+        downloads_dir = Path.home() / "Downloads"
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+
+        parsed = urllib.parse.urlparse(download_url)
+        suggested_name = Path(parsed.path).name.strip()
+        if not suggested_name:
+            suggested_name = f"DocumentScannerSetup_v{latest_version}.exe"
+        if not suggested_name.lower().endswith(".exe"):
+            suggested_name = f"{suggested_name}.exe"
+
+        target_path = get_unique_path(downloads_dir / suggested_name)
+        self.status_var.set(f"Downloading update: {target_path.name}...")
+        self.dialog_status_var.set(f"Downloading installer to {target_path}")
+
+        def _worker() -> None:
+            try:
+                request = urllib.request.Request(
+                    download_url,
+                    headers={
+                        "User-Agent": "DocumentScanner",
+                        "Accept": "application/octet-stream,*/*",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=120) as response, open(target_path, "wb") as handle:
+                    while True:
+                        chunk = response.read(1024 * 256)
+                        if not chunk:
+                            break
+                        handle.write(chunk)
+                self.after(0, lambda: self._finish_update_download(target_path, None, download_url))
+            except Exception as exc:
+                self.after(0, lambda: self._finish_update_download(target_path, exc, download_url))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _finish_update_download(self, target_path: Path, error: Exception | None, download_url: str) -> None:
+        if error is not None:
+            self.status_var.set("Update download failed.")
+            retry_in_browser = messagebox.askyesno(
+                "Download Failed",
+                "Unable to download the installer directly.\n\n"
+                f"Error: {error}\n\n"
+                "Open the GitHub download page instead?",
+            )
+            if retry_in_browser:
+                try:
+                    webbrowser.open(download_url)
+                except Exception:
+                    messagebox.showwarning(
+                        "Download Failed",
+                        "Could not open your browser automatically.\n"
+                        f"Use this link:\n{download_url}",
+                    )
+            return
+
+        self.status_var.set(f"Update downloaded: {target_path.name}")
+        self.dialog_status_var.set(f"Installer downloaded: {target_path}")
+        messagebox.showinfo(
+            "Download Complete",
+            f"Installer downloaded to:\n{target_path}",
+        )
 
     def setup_style(self) -> None:
         style = ttk.Style(self)
