@@ -497,6 +497,7 @@ class ScannerApp(tk.Tk):
         self._progress_start: float = 0.0
         self._progress_est: float = 10.0
         self._scan_cancel_requested = False
+        self._active_batch_source: str | None = None
 
         # Auto-save whenever folder or format changes
         self.folder_var.trace_add("write", self._on_setting_change)
@@ -1109,6 +1110,8 @@ class ScannerApp(tk.Tk):
         self.is_scanning = scanning
         if scanning:
             self._scan_cancel_requested = False
+        else:
+            self._active_batch_source = None
 
         for button in [self.scan_button, self.preview_button, self.clear_button, self.refresh_button, self.browse_button, self.close_button]:
             if scanning:
@@ -1190,7 +1193,7 @@ class ScannerApp(tk.Tk):
 
     def _apply_scan_source_to_device(self, device: Any, source: str) -> None:
         desired_flag = WIA_DPS_FLATBED
-        if source == "ADF":
+        if source in {"ADF", "ADF_LOCKED"}:
             desired_flag = WIA_DPS_FEEDER
         elif source == "Auto":
             adf_supported, adf_ready = detect_adf_capability(device)
@@ -1224,7 +1227,7 @@ class ScannerApp(tk.Tk):
             return None
 
         preferred_indices = list(range(1, item_count + 1))
-        if source == "ADF":
+        if source in {"ADF", "ADF_LOCKED"}:
             preferred_indices = [2, 1] + [index for index in preferred_indices if index not in {1, 2}]
         elif source == "Auto":
             adf_supported, adf_ready = detect_adf_capability(device)
@@ -1242,12 +1245,20 @@ class ScannerApp(tk.Tk):
         return None
 
     def _should_use_feeder(self, device: Any, source: str) -> bool:
-        if source == "ADF":
+        if source in {"ADF", "ADF_LOCKED"}:
             return True
         if source == "Auto":
             adf_supported, adf_ready = detect_adf_capability(device)
             return adf_supported and adf_ready
         return False
+
+    def _resolve_batch_source(self, total_pages: int) -> str:
+        selected_source = self.scan_source_var.get()
+        if selected_source == "ADF":
+            return "ADF_LOCKED"
+        if selected_source == "Auto" and total_pages > 1 and "ADF" in self._source_options:
+            return "ADF_LOCKED"
+        return selected_source
 
     def _get_page_transition_delay_ms(self) -> int:
         source = self.scan_source_var.get()
@@ -1423,7 +1434,7 @@ class ScannerApp(tk.Tk):
         requested_format = WIA_FORMAT_JPG if save_type == "JPG" else WIA_FORMAT_PNG
         dpi_snap = self.get_selected_dpi()
         quality_snap = self.scan_quality_var.get()
-        source_snap = self.scan_source_var.get()
+        source_snap = self._active_batch_source or self.scan_source_var.get()
         result_q: queue.Queue[ScanResult] = queue.Queue()
         self.status_var.set(f"Scanning page {page_num} of {total_pages}...")
         self.dialog_status_var.set(f"Scanning page {page_num} of {total_pages}...")
@@ -1658,7 +1669,7 @@ class ScannerApp(tk.Tk):
     def _start_threaded_preview(self) -> None:
         dpi_snap = self.get_selected_dpi()
         quality_snap = self.scan_quality_var.get()
-        source_snap = self.scan_source_var.get()
+        source_snap = self._active_batch_source or self.scan_source_var.get()
         result_q: queue.Queue[ScanResult] = queue.Queue()
         self._start_progress_ticks(self._estimate_scan_duration())
         t = threading.Thread(
@@ -2258,16 +2269,13 @@ class ScannerApp(tk.Tk):
         pages_to_scan = self.get_selected_pages()
 
         if pages_to_scan > 1 and save_type in {"PNG", "JPG"}:
-            keep_single_file = messagebox.askyesno(
+            save_type = "PDF"
+            self.format_var.set("PDF")
+            messagebox.showinfo(
                 "Multi-Page Output",
-                "Multi-page PNG/JPG scans are saved as separate files (for example: file_p1, file_p2).\n\n"
-                "Do you want all pages in one file instead?\n\n"
-                "Click Yes to switch this scan to PDF.",
+                "Multi-page scans are saved as a single PDF file.",
             )
-            if keep_single_file:
-                save_type = "PDF"
-                self.format_var.set("PDF")
-                self.status_var.set("Switched to PDF so all pages are saved in one file.")
+            self.status_var.set("Switched to PDF so all pages are saved in one file.")
 
         if self.scanner_var.get() == "No scanner detected":
             messagebox.showwarning("Scanner not found", "No scanner was detected.")
@@ -2290,6 +2298,7 @@ class ScannerApp(tk.Tk):
         self.after(50, lambda: self._do_scan(folder, filename, save_type, pages_to_scan))
 
     def _do_scan(self, folder: Path, filename: str, save_type: str, pages_to_scan: int):
+        self._active_batch_source = self._resolve_batch_source(pages_to_scan)
         if save_type == "PDF":
             self._start_threaded_pdf_scan(folder, filename, pages_to_scan)
         else:

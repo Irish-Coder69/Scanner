@@ -1,6 +1,6 @@
 [Setup]
 AppName=Document Scanner
-AppVersion=1.0.26
+AppVersion=1.0.27
 DefaultDirName={autopf}\Document Scanner
 DefaultGroupName=Document Scanner
 OutputDir=installer_output
