@@ -105,6 +105,7 @@ class SettingsData(TypedDict, total=False):
     format: str
     dpi: int
     pages: int
+    adf_delay_seconds: int
 
 
 ScanResult = tuple[Literal["ok", "cancelled", "error"], str | Exception | None]
@@ -369,6 +370,10 @@ def load_settings() -> SettingsData:
                 if isinstance(pages, int):
                     settings["pages"] = pages
 
+                adf_delay_seconds = raw_map.get("adf_delay_seconds")
+                if isinstance(adf_delay_seconds, int):
+                    settings["adf_delay_seconds"] = adf_delay_seconds
+
                 return settings
     except Exception:
         pass
@@ -458,6 +463,12 @@ class ScannerApp(tk.Tk):
         if saved_pages > 100:
             saved_pages = 100
         self.pages_var = tk.StringVar(value=str(saved_pages))
+        saved_adf_delay = int(_cfg.get("adf_delay_seconds", 4))
+        if saved_adf_delay < 1:
+            saved_adf_delay = 1
+        if saved_adf_delay > 10:
+            saved_adf_delay = 10
+        self.adf_delay_var = tk.StringVar(value=str(saved_adf_delay))
 
         self.model_var = tk.StringVar(value="N/A")
         self.connection_var = tk.StringVar(value="N/A")
@@ -481,6 +492,7 @@ class ScannerApp(tk.Tk):
         self.format_var.trace_add("write", self._on_setting_change)
         self.dpi_var.trace_add("write", self._on_setting_change)
         self.pages_var.trace_add("write", self._on_setting_change)
+        self.adf_delay_var.trace_add("write", self._on_setting_change)
 
         # Save on normal window close
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -753,6 +765,15 @@ class ScannerApp(tk.Tk):
             width=12,
         )
         self.source_combo.grid(row=10, column=0, sticky="w", padx=12, pady=(0, 4))
+
+        ttk.Label(settings, text="ADF page delay (seconds):").grid(row=11, column=0, sticky="w", padx=6, pady=(10, 4))
+        ttk.Combobox(
+            settings,
+            textvariable=self.adf_delay_var,
+            values=[str(second) for second in range(1, 11)],
+            state="readonly",
+            width=10,
+        ).grid(row=12, column=0, sticky="w", padx=12, pady=(0, 4))
 
         actions = ttk.Frame(left_col)
         actions.grid(row=8, column=1, sticky="w", padx=(2, 6), pady=(8, 10))
@@ -1100,10 +1121,11 @@ class ScannerApp(tk.Tk):
 
     def _get_page_transition_delay_ms(self) -> int:
         source = self.scan_source_var.get()
+        adf_delay_ms = self.get_selected_adf_delay_seconds() * 1000
         if source == "ADF":
-            return 2000
+            return adf_delay_ms
         if source == "Auto":
-            return 1200
+            return max(1000, int(adf_delay_ms * 0.7))
         return 250
 
     def _wia_acquire_thread(
@@ -1688,6 +1710,12 @@ class ScannerApp(tk.Tk):
         except Exception:
             return 1
 
+    def get_selected_adf_delay_seconds(self) -> int:
+        try:
+            return min(10, max(1, int(self.adf_delay_var.get())))
+        except Exception:
+            return 4
+
     def apply_scan_settings(self, item: Any) -> None:
         dpi_value = self.get_selected_dpi()
         quality = self.scan_quality_var.get()
@@ -1900,6 +1928,7 @@ class ScannerApp(tk.Tk):
             "format": self.format_var.get(),
             "dpi": self.get_selected_dpi(),
             "pages": self.get_selected_pages(),
+            "adf_delay_seconds": self.get_selected_adf_delay_seconds(),
         })
 
     def _on_close(self) -> None:
@@ -1908,6 +1937,7 @@ class ScannerApp(tk.Tk):
             "format": self.format_var.get(),
             "dpi": self.get_selected_dpi(),
             "pages": self.get_selected_pages(),
+            "adf_delay_seconds": self.get_selected_adf_delay_seconds(),
         })
         self.destroy()
 
