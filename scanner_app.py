@@ -184,6 +184,14 @@ def is_busy_error(exc: Exception) -> bool:
     return "device is busy" in error_text or "wia device is busy" in error_text or "-2145320954" in error_text
 
 
+def is_adf_empty_error(exc: Exception) -> bool:
+    error_text = str(exc).lower()
+    return (
+        "no documents left in the document feeder" in error_text
+        or "-2145320957" in error_text
+    )
+
+
 def _extract_semver(version_text: str) -> tuple[int, int, int]:
     """
     Extract a comparable semantic version triplet from free-form text.
@@ -1274,6 +1282,7 @@ class ScannerApp(tk.Tk):
                         break
 
                     is_busy = is_busy_error(direct_exc)
+                    feeder_empty = is_adf_empty_error(direct_exc)
                     feeder_requested = source == "ADF"
                     feeder_mode = feeder_requested
                     if device is not None:
@@ -1281,7 +1290,7 @@ class ScannerApp(tk.Tk):
 
                     # ADF drivers can throw transient transfer faults mid-feed.
                     # Retry feeder scans even when the driver does not classify the error as "busy".
-                    should_retry = attempt < attempts and (is_busy or feeder_mode)
+                    should_retry = attempt < attempts and (is_busy or (feeder_mode and not feeder_empty))
 
                     if should_retry:
                         wait_seconds = 1.0 * attempt if is_busy else 1.5 * attempt
@@ -1439,6 +1448,36 @@ class ScannerApp(tk.Tk):
         self._complete_progress()
         if status == "error":
             exc = value if isinstance(value, Exception) else RuntimeError("Scan failed.")
+            if is_adf_empty_error(exc) and self.scan_source_var.get() in {"ADF", "Auto"}:
+                if saved_paths:
+                    scanned_pages = len(saved_paths)
+                    self.filename_var.set("")
+                    self.status_var.set(f"ADF emptied after {scanned_pages} page(s). Saved scanned pages.")
+                    self.dialog_status_var.set(f"ADF emptied. Saved {scanned_pages} page(s) successfully.")
+                    self.update_dialog_stage("saved")
+                    preview_list = "\n".join(str(path.name) for path in saved_paths[:10])
+                    more = f"\n...and {scanned_pages - 10} more" if scanned_pages > 10 else ""
+                    messagebox.showinfo(
+                        "ADF Empty",
+                        f"No more pages were found in the feeder.\n\nSaved {scanned_pages} page(s) to:\n{folder}\n\n{preview_list}{more}",
+                    )
+                    if self.ready_var.get() in {"Scanning...", "Busy"}:
+                        self.ready_var.set("Ready")
+                    self.set_scanning_state(False)
+                    return
+
+                self.status_var.set("ADF is empty.")
+                self.dialog_status_var.set("No pages were found in the feeder.")
+                self.update_dialog_stage("ready")
+                messagebox.showwarning(
+                    "ADF Empty",
+                    "The feeder is empty.\n\nLoad paper in the ADF and scan again.",
+                )
+                if self.ready_var.get() in {"Scanning...", "Busy"}:
+                    self.ready_var.set("Ready")
+                self.set_scanning_state(False)
+                return
+
             self.status_var.set("Scan failed.")
             self.dialog_status_var.set("Scan failed. See error dialog for details.")
             self.update_dialog_stage("error")
@@ -1669,6 +1708,26 @@ class ScannerApp(tk.Tk):
 
         if status == "error":
             exc = value if isinstance(value, Exception) else RuntimeError("PDF scan failed.")
+            if is_adf_empty_error(exc) and self.scan_source_var.get() in {"ADF", "Auto"}:
+                if pages:
+                    self.status_var.set("ADF emptied. Saving scanned PDF pages...")
+                    self.dialog_status_var.set("ADF emptied. Finalizing PDF with scanned pages.")
+                    self._finish_pdf_scan(final_path, pages, temp_files)
+                    return
+
+                self._cleanup_pdf_temp_files(temp_files)
+                self.status_var.set("ADF is empty.")
+                self.dialog_status_var.set("No pages were found in the feeder.")
+                self.update_dialog_stage("ready")
+                messagebox.showwarning(
+                    "ADF Empty",
+                    "The feeder is empty.\n\nLoad paper in the ADF and scan again.",
+                )
+                if self.ready_var.get() in {"Scanning...", "Busy"}:
+                    self.ready_var.set("Ready")
+                self.set_scanning_state(False)
+                return
+
             self._cleanup_pdf_temp_files(temp_files)
             self.status_var.set("Scan failed.")
             self.dialog_status_var.set("Scan failed. See error dialog for details.")
