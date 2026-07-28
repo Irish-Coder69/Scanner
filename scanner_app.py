@@ -1521,6 +1521,29 @@ class ScannerApp(tk.Tk):
                     )
                     return
 
+                if remaining_pages > 0:
+                    continue_scan = messagebox.askyesno(
+                        "Load More Pages",
+                        f"The feeder is empty, but {remaining_pages} page(s) are still requested.\n\n"
+                        "Load more pages in the ADF and click Yes to continue scanning.",
+                    )
+                    if continue_scan:
+                        self.status_var.set(f"Waiting for more pages. Continuing with page {page_num}...")
+                        self.dialog_status_var.set(f"Continuing scan for page {page_num} after refill.")
+                        self.after(
+                            max(1500, self._get_page_transition_delay_ms()),
+                            lambda: self._start_threaded_image_page_scan(
+                                folder,
+                                filename,
+                                save_type,
+                                page_num,
+                                total_pages,
+                                saved_paths,
+                                0,
+                            ),
+                        )
+                        return
+
                 if saved_paths:
                     self.filename_var.set("")
                     self.status_var.set(f"ADF emptied after {scanned_pages} page(s). Saved scanned pages.")
@@ -1802,6 +1825,28 @@ class ScannerApp(tk.Tk):
                         ),
                     )
                     return
+
+                if remaining_pages > 0:
+                    continue_scan = messagebox.askyesno(
+                        "Load More Pages",
+                        f"The feeder is empty, but {remaining_pages} page(s) are still requested.\n\n"
+                        "Load more pages in the ADF and click Yes to continue scanning.",
+                    )
+                    if continue_scan:
+                        self.status_var.set(f"Waiting for more pages. Continuing with page {page_num}...")
+                        self.dialog_status_var.set(f"Continuing PDF scan for page {page_num} after refill.")
+                        self.after(
+                            max(1500, self._get_page_transition_delay_ms()),
+                            lambda: self._start_threaded_pdf_page_scan(
+                                final_path,
+                                pages,
+                                temp_files,
+                                page_num,
+                                total_pages,
+                                0,
+                            ),
+                        )
+                        return
 
                 if pages:
                     self.status_var.set("ADF emptied. Saving scanned PDF pages...")
