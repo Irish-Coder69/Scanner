@@ -2163,6 +2163,18 @@ class ScannerApp(tk.Tk):
         save_type = self.format_var.get().upper()
         pages_to_scan = self.get_selected_pages()
 
+        if pages_to_scan > 1 and save_type in {"PNG", "JPG"}:
+            keep_single_file = messagebox.askyesno(
+                "Multi-Page Output",
+                "Multi-page PNG/JPG scans are saved as separate files (for example: file_p1, file_p2).\n\n"
+                "Do you want all pages in one file instead?\n\n"
+                "Click Yes to switch this scan to PDF.",
+            )
+            if keep_single_file:
+                save_type = "PDF"
+                self.format_var.set("PDF")
+                self.status_var.set("Switched to PDF so all pages are saved in one file.")
+
         if self.scanner_var.get() == "No scanner detected":
             messagebox.showwarning("Scanner not found", "No scanner was detected.")
             return
