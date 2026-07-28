@@ -40,6 +40,8 @@ WIA_DOCUMENT_HANDLING_SELECT_PROPERTY = 3088
 WIA_DPS_FEEDER = 1
 WIA_DPS_FLATBED = 2
 DEFAULT_UPDATE_MANIFEST_URL = "https://api.github.com/repos/Irish-Coder69/Scanner/releases/latest"
+PROJECT_RELEASES_URL = "https://github.com/Irish-Coder69/Scanner/releases/latest"
+PROJECT_COPYRIGHT = "Copyright (c) 2026 Judson M. Fitzpatrick - Irish_Coder's_Programing"
 
 
 def load_version_info() -> dict[str, str]:
@@ -475,6 +477,7 @@ class ScannerApp(tk.Tk):
         self.device_id_var = tk.StringVar(value="N/A")
         self.ready_var = tk.StringVar(value="N/A")
         self.adf_var = tk.StringVar(value="N/A")
+        self._source_options = ["Auto", "Flatbed"]
         self.scan_source_var = tk.StringVar(value="Auto")
         self.scan_quality_var = tk.StringVar(value="Color")
         self.preview_status_var = tk.StringVar(value="No preview yet. Click Scan Preview.")
@@ -513,20 +516,129 @@ class ScannerApp(tk.Tk):
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Refresh Scanner", command=self.detect_scanner)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self._on_close)
+        file_menu.add_command(label="Close Program", command=self._on_close)
+
+        scan_settings_menu = tk.Menu(menubar, tearoff=0)
+        scan_settings_menu.add_command(label="Image Quality...", command=self.open_quality_settings)
+        scan_settings_menu.add_command(label="Resolution (DPI)...", command=self.open_dpi_settings)
+        scan_settings_menu.add_command(label="Pages to Scan...", command=self.open_pages_settings)
+        scan_settings_menu.add_command(label="Source...", command=self.open_source_settings)
+        scan_settings_menu.add_command(label="ADF Page Delay (seconds)...", command=self.open_adf_delay_settings)
 
         help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(label="Check for Updates", command=lambda: self.check_for_updates(silent=False))
-        help_menu.add_command(label="About", command=self.show_about)
+        help_menu.add_command(label="Check for Updates (GitHub)", command=lambda: self.check_for_updates(silent=False))
+        help_menu.add_command(label="Open GitHub Releases", command=lambda: webbrowser.open(PROJECT_RELEASES_URL))
+
+        about_menu = tk.Menu(menubar, tearoff=0)
+        about_menu.add_command(label="About Document Scanner", command=self.show_about)
 
         menubar.add_cascade(label="File", menu=file_menu)
+        menubar.add_cascade(label="Scan Settings", menu=scan_settings_menu)
         menubar.add_cascade(label="Help", menu=help_menu)
+        menubar.add_cascade(label="About", menu=about_menu)
         self.config(menu=menubar)
 
     def show_about(self) -> None:
         messagebox.showinfo(
             "About Document Scanner",
-            f"Document Scanner\nVersion {APP_VERSION}",
+            "\n".join([
+                f"Document Scanner v{APP_VERSION}",
+                "",
+                "A Windows desktop application for scanning documents to PDF, PNG, and JPG.",
+                "Built with WIA scanner support, multi-page ADF scanning, and update checks.",
+                "",
+                "Created by:",
+                "Judson M. Fitzpatrick",
+                "Irish_Coder's_Programing",
+                "",
+                PROJECT_COPYRIGHT,
+                "",
+                f"Updates are checked from GitHub:\n{DEFAULT_UPDATE_MANIFEST_URL}",
+            ]),
+        )
+
+    def _open_setting_picker(self, title: str, prompt: str, variable: tk.StringVar, values: list[str]) -> None:
+        if self.is_scanning:
+            self.status_var.set("Finish the current scan before changing settings.")
+            return
+
+        if not values:
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text=prompt, wraplength=320, justify="left").grid(row=0, column=0, sticky="w")
+
+        initial_value = variable.get()
+        if initial_value not in values:
+            initial_value = values[0]
+        selected = tk.StringVar(value=initial_value)
+
+        combo = ttk.Combobox(frame, textvariable=selected, values=values, state="readonly", width=26)
+        combo.grid(row=1, column=0, sticky="ew", pady=(8, 10))
+        combo.focus_set()
+
+        actions = ttk.Frame(frame)
+        actions.grid(row=2, column=0, sticky="e")
+
+        def _apply() -> None:
+            variable.set(selected.get())
+            self.status_var.set(f"{title} updated: {selected.get()}")
+            dialog.destroy()
+
+        ttk.Button(actions, text="Apply", command=_apply).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).grid(row=0, column=1)
+
+        frame.columnconfigure(0, weight=1)
+        dialog.bind("<Return>", lambda _event: _apply())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.wait_window(dialog)
+
+    def open_quality_settings(self) -> None:
+        self._open_setting_picker(
+            "Image Quality",
+            "Choose the capture quality mode for scanning.",
+            self.scan_quality_var,
+            ["Color", "Grayscale", "BlackWhite", "Custom"],
+        )
+
+    def open_dpi_settings(self) -> None:
+        self._open_setting_picker(
+            "Resolution (DPI)",
+            "Choose scan resolution. Higher DPI increases detail and file size.",
+            self.dpi_var,
+            [str(dpi) for dpi in range(100, 1201, 100)],
+        )
+
+    def open_pages_settings(self) -> None:
+        self._open_setting_picker(
+            "Pages to Scan",
+            "Choose how many pages to capture in this scan run.",
+            self.pages_var,
+            [str(page) for page in range(1, 101)],
+        )
+
+    def open_source_settings(self) -> None:
+        self._open_setting_picker(
+            "Scan Source",
+            "Choose source mode. ADF option appears only when feeder is supported.",
+            self.scan_source_var,
+            self._source_options,
+        )
+
+    def open_adf_delay_settings(self) -> None:
+        self._open_setting_picker(
+            "ADF Page Delay",
+            "Choose delay between pages. Increase this if page 2+ is blank or unstable.",
+            self.adf_delay_var,
+            [str(second) for second in range(1, 11)],
         )
 
     def check_for_updates(self, silent: bool) -> None:
@@ -720,63 +832,26 @@ class ScannerApp(tk.Tk):
             width=12,
         ).grid(row=7, column=1, sticky="w", padx=6, pady=6)
 
-        settings = ttk.LabelFrame(left_col, text="Scan Settings", padding=10)
-        settings.grid(row=4, column=2, rowspan=4, sticky="ew", padx=6, pady=8)
-
-        ttk.Label(settings, text="Image Quality:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
-
-        ttk.Radiobutton(settings, text="Color picture", variable=self.scan_quality_var, value="Color").grid(
-            row=1, column=0, sticky="w", padx=12, pady=4
-        )
-        ttk.Radiobutton(settings, text="Grayscale picture", variable=self.scan_quality_var, value="Grayscale").grid(
-            row=2, column=0, sticky="w", padx=12, pady=4
-        )
-        ttk.Radiobutton(settings, text="Black and white", variable=self.scan_quality_var, value="BlackWhite").grid(
-            row=3, column=0, sticky="w", padx=12, pady=4
-        )
-        ttk.Radiobutton(settings, text="Custom settings", variable=self.scan_quality_var, value="Custom").grid(
-            row=4, column=0, sticky="w", padx=12, pady=4
-        )
-
-        ttk.Label(settings, text="DPI:").grid(row=5, column=0, sticky="w", padx=6, pady=(10, 4))
-        ttk.Combobox(
-            settings,
-            textvariable=self.dpi_var,
-            values=[str(dpi) for dpi in range(100, 1201, 100)],
-            state="readonly",
-            width=10,
-        ).grid(row=6, column=0, sticky="w", padx=12, pady=(0, 4))
-
-        ttk.Label(settings, text="Pages to Scan:").grid(row=7, column=0, sticky="w", padx=6, pady=(10, 4))
-        ttk.Combobox(
-            settings,
-            textvariable=self.pages_var,
-            values=[str(page) for page in range(1, 101)],
-            state="readonly",
-            width=10,
-        ).grid(row=8, column=0, sticky="w", padx=12, pady=(0, 4))
-
-        ttk.Label(settings, text="Source:").grid(row=9, column=0, sticky="w", padx=6, pady=(10, 4))
-        self.source_combo = ttk.Combobox(
-            settings,
-            textvariable=self.scan_source_var,
-            values=["Auto", "Flatbed", "ADF"],
-            state="readonly",
-            width=12,
-        )
-        self.source_combo.grid(row=10, column=0, sticky="w", padx=12, pady=(0, 4))
-
-        ttk.Label(settings, text="ADF page delay (seconds):").grid(row=11, column=0, sticky="w", padx=6, pady=(10, 4))
-        ttk.Combobox(
-            settings,
-            textvariable=self.adf_delay_var,
-            values=[str(second) for second in range(1, 11)],
-            state="readonly",
-            width=10,
-        ).grid(row=12, column=0, sticky="w", padx=12, pady=(0, 4))
+        settings_summary = ttk.LabelFrame(left_col, text="Scan Settings", padding=8)
+        settings_summary.grid(row=8, column=0, columnspan=3, sticky="ew", padx=6, pady=(6, 4))
+        ttk.Label(
+            settings_summary,
+            text="Use the Scan Settings menu to adjust options in separate dialogs.",
+            foreground="#555555",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 8))
+        ttk.Label(settings_summary, text="Quality:").grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, textvariable=self.scan_quality_var).grid(row=1, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, text="DPI:").grid(row=2, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, textvariable=self.dpi_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, text="Pages:").grid(row=3, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, textvariable=self.pages_var).grid(row=3, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, text="Source:").grid(row=4, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, textvariable=self.scan_source_var).grid(row=4, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, text="ADF delay (s):").grid(row=5, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(settings_summary, textvariable=self.adf_delay_var).grid(row=5, column=1, sticky="w", padx=4, pady=2)
 
         actions = ttk.Frame(left_col)
-        actions.grid(row=8, column=1, sticky="w", padx=(2, 6), pady=(8, 10))
+        actions.grid(row=9, column=1, sticky="w", padx=(2, 6), pady=(8, 10))
 
         self.scan_button = ttk.Button(actions, text="Scan Document", command=self.scan_document)
         self.scan_button.grid(row=0, column=0, padx=(0, 8), pady=(0, 2))
@@ -787,16 +862,16 @@ class ScannerApp(tk.Tk):
         self.close_button = ttk.Button(actions, text="Close", command=self._on_close)
         self.close_button.grid(row=0, column=3, pady=(0, 2))
 
-        ttk.Separator(left_col, orient="horizontal").grid(row=9, column=0, columnspan=3, sticky="ew", pady=10)
+        ttk.Separator(left_col, orient="horizontal").grid(row=10, column=0, columnspan=3, sticky="ew", pady=10)
 
-        ttk.Label(left_col, text="Status:").grid(row=10, column=0, sticky="nw", padx=6, pady=6)
+        ttk.Label(left_col, text="Status:").grid(row=11, column=0, sticky="nw", padx=6, pady=6)
         ttk.Label(left_col, textvariable=self.status_var, foreground="#004aad").grid(
-            row=10, column=1, columnspan=2, sticky="w", padx=6, pady=6
+            row=11, column=1, columnspan=2, sticky="w", padx=6, pady=6
         )
 
-        ttk.Label(left_col, text="Scan Progress:").grid(row=11, column=0, sticky="w", padx=6, pady=(0, 6))
+        ttk.Label(left_col, text="Scan Progress:").grid(row=12, column=0, sticky="w", padx=6, pady=(0, 6))
         progress_frame = ttk.Frame(left_col)
-        progress_frame.grid(row=11, column=1, columnspan=2, sticky="ew", padx=6, pady=(0, 6))
+        progress_frame.grid(row=12, column=1, columnspan=2, sticky="ew", padx=6, pady=(0, 6))
         self.scan_progressbar = ttk.Progressbar(
             progress_frame,
             orient="horizontal",
@@ -811,7 +886,7 @@ class ScannerApp(tk.Tk):
             left_col,
             text="The selected folder stays in place until you change it manually.",
             foreground="#666666",
-        ).grid(row=12, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 0))
+        ).grid(row=13, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 0))
 
         left_col.columnconfigure(1, weight=1)
 
@@ -1874,12 +1949,14 @@ class ScannerApp(tk.Tk):
             if first["adf_supported"]:
                 state = "Ready" if first["adf_ready"] else "Available (no pages loaded)"
                 self.adf_var.set(state)
-                self.source_combo.configure(values=["Auto", "Flatbed", "ADF"], state="readonly")
-                self.scan_source_var.set("ADF")
+                self._source_options = ["Auto", "Flatbed", "ADF"]
+                if self.scan_source_var.get() not in self._source_options:
+                    self.scan_source_var.set("ADF")
             else:
                 self.adf_var.set("Not available")
-                self.source_combo.configure(values=["Auto", "Flatbed"], state="readonly")
-                self.scan_source_var.set("Flatbed")
+                self._source_options = ["Auto", "Flatbed"]
+                if self.scan_source_var.get() not in self._source_options:
+                    self.scan_source_var.set("Flatbed")
             self.status_var.set("Scanner detected and ready.")
             self.dialog_status_var.set("Scanner ready. Click Scan Document to open the scan dialog.")
             self.update_dialog_stage("ready")
@@ -1890,7 +1967,7 @@ class ScannerApp(tk.Tk):
             self.device_id_var.set("N/A")
             self.ready_var.set("Not detected")
             self.adf_var.set("N/A")
-            self.source_combo.configure(values=["Auto", "Flatbed"], state="readonly")
+            self._source_options = ["Auto", "Flatbed"]
             self.scan_source_var.set("Auto")
             self.status_var.set("Connect the scanner and click Refresh.")
             self.dialog_status_var.set("No scanner detected. Connect scanner and click Refresh.")
