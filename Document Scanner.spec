@@ -5,7 +5,7 @@ a = Analysis(
     ['scanner_app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('version.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

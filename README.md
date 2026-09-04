@@ -20,6 +20,11 @@ Windows desktop app for scanning documents to a chosen folder.
 - Windows with WIA-compatible scanner
 - Python 3.13+
 
+For Epson scanners that are available only through Epson Scan 2 (not Windows
+WIA), the application detects and opens Epson Scan 2. Complete the scan and
+choose its destination inside Epson Scan 2; the app's in-window file and scan
+settings apply to WIA scanners only.
+
 ## Run From Source
 
 ```powershell

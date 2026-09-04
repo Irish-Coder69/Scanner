@@ -3,6 +3,7 @@ Set-Location $PSScriptRoot
 $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 $exePath = Join-Path $PSScriptRoot "dist\Document Scanner.exe"
 $iconPath = Join-Path $PSScriptRoot "scanner_icon.ico"
+$versionPath = Join-Path $PSScriptRoot "version.json"
 
 function Set-Shortcut {
 	param(
@@ -22,13 +23,14 @@ function Set-Shortcut {
 
 & $python -m pip install -r requirements.txt
 & $python -c "from scanner_app import create_default_icon; create_default_icon('scanner_icon.ico', overwrite=True)"
-& $python -m PyInstaller --onefile --windowed --icon=scanner_icon.ico --name 'Document Scanner' scanner_app.py
+& $python -m PyInstaller --onefile --windowed --add-data "version.json;." --icon=scanner_icon.ico --name 'Document Scanner' scanner_app.py
 
 if (Test-Path $exePath) {
 	# Copy EXE and icon to local drive so Windows allows pinning to taskbar
 	$localDir = Join-Path $env:LOCALAPPDATA "Document Scanner"
 	$localExe = Join-Path $localDir "Document Scanner.exe"
 	$localIcon = Join-Path $localDir "scanner_icon.ico"
+	$localVersion = Join-Path $localDir "version.json"
 	$shortcutTarget = $exePath
 	$shortcutIcon = $iconPath
 	$shortcutWorkingDir = (Split-Path -Parent $exePath)
@@ -39,6 +41,7 @@ if (Test-Path $exePath) {
 	try {
 		Copy-Item -Path $exePath -Destination $localExe -Force -ErrorAction Stop
 		Copy-Item -Path $iconPath -Destination $localIcon -Force -ErrorAction Stop
+		Copy-Item -Path $versionPath -Destination $localVersion -Force -ErrorAction Stop
 		$shortcutTarget = $localExe
 		$shortcutIcon = $localIcon
 		$shortcutWorkingDir = $localDir

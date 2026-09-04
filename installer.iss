@@ -2,7 +2,7 @@
 AppName=Document Scanner
 AppId={{F9FCA760-4F20-4B8D-B1A1-5E6588285EB5}
 AppVersion=1.0.31
-DefaultDirName={autopf}\Document Scanner
+DefaultDirName={localappdata}\Document Scanner
 DefaultGroupName=Document Scanner
 OutputDir=installer_output
 OutputBaseFilename=DocumentScannerSetup

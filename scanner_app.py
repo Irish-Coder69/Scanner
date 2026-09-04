@@ -2,6 +2,7 @@ import json
 import os
 import queue
 import re
+import subprocess
 import tempfile
 import threading
 import time
@@ -100,6 +101,7 @@ class ScannerRecord(TypedDict):
     status: str
     adf_supported: bool
     adf_ready: bool
+    backend: str
 
 
 class SettingsData(TypedDict, total=False):
@@ -295,55 +297,87 @@ def detect_adf_capability(device: Any) -> tuple[bool, bool]:
     return adf_supported, adf_ready
 
 
+def get_epson_scan_2_launcher() -> Path | None:
+    """Return the Epson Scan 2 launcher when it is installed locally."""
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    relative_path = Path("epson") / "Epson Scan 2" / "Core" / "es2launcher.exe"
+
+    for base_path in (program_files, program_files_x86):
+        launcher = Path(base_path) / relative_path
+        if launcher.is_file():
+            return launcher
+    return None
+
+
 def get_connected_scanners() -> list[ScannerRecord]:
-    if win32com is None or pythoncom is None:
-        return []
+    scanners: list[ScannerRecord] = []
+    if win32com is not None and pythoncom is not None:
+        try:
+            pythoncom_module = cast(Any, pythoncom)
+            win32_client = cast(Any, win32com.client)
+            pythoncom_module.CoInitialize()
+            manager = win32_client.Dispatch("WIA.DeviceManager")
 
-    try:
-        pythoncom_module = cast(Any, pythoncom)
-        win32_client = cast(Any, win32com.client)
-        pythoncom_module.CoInitialize()
-        manager = win32_client.Dispatch("WIA.DeviceManager")
-        scanners: list[ScannerRecord] = []
-
-        for info in manager.DeviceInfos:
-            try:
-                if int(info.Type) != SCANNER_DEVICE_TYPE:
-                    continue
-
-                scanner_name = "Unknown scanner"
-                for prop in info.Properties:
-                    try:
-                        if str(prop.Name).lower() == "name":
-                            scanner_name = str(prop.Value)
-                            break
-                    except Exception:
+            for info in manager.DeviceInfos:
+                try:
+                    if int(info.Type) != SCANNER_DEVICE_TYPE:
                         continue
 
-                device_id = str(getattr(info, "DeviceID", ""))
-                adf_supported = False
-                adf_ready = False
-                try:
-                    device = info.Connect()
-                    adf_supported, adf_ready = detect_adf_capability(device)
-                except Exception:
-                    pass
-                scanners.append(
-                    {
-                        "name": scanner_name,
-                        "connection": detect_connection_type(info),
-                        "device_id": device_id,
-                        "status": get_scanner_status(info),
-                        "adf_supported": adf_supported,
-                        "adf_ready": adf_ready,
-                    }
-                )
-            except Exception:
-                continue
+                    scanner_name = "Unknown scanner"
+                    for prop in info.Properties:
+                        try:
+                            if str(prop.Name).lower() == "name":
+                                scanner_name = str(prop.Value)
+                                break
+                        except Exception:
+                            continue
 
-        return scanners
-    except Exception:
-        return []
+                    device_id = str(getattr(info, "DeviceID", ""))
+                    adf_supported = False
+                    adf_ready = False
+                    try:
+                        device = info.Connect()
+                        adf_supported, adf_ready = detect_adf_capability(device)
+                    except Exception:
+                        pass
+                    scanners.append(
+                        {
+                            "name": scanner_name,
+                            "connection": detect_connection_type(info),
+                            "device_id": device_id,
+                            "status": get_scanner_status(info),
+                            "adf_supported": adf_supported,
+                            "adf_ready": adf_ready,
+                            "backend": "wia",
+                        }
+                    )
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        finally:
+            try:
+                cast(Any, pythoncom).CoUninitialize()
+            except Exception:
+                pass
+
+    if not scanners:
+        epson_launcher = get_epson_scan_2_launcher()
+        if epson_launcher is not None:
+            scanners.append(
+                {
+                    "name": "Epson Scan 2",
+                    "connection": "Epson Scan 2",
+                    "device_id": str(epson_launcher),
+                    "status": "Available",
+                    "adf_supported": False,
+                    "adf_ready": False,
+                    "backend": "epson_scan_2",
+                }
+            )
+
+    return scanners
 
 
 # ---------- Settings persistence ----------
@@ -500,6 +534,7 @@ class ScannerApp(tk.Tk):
         self._progress_est: float = 10.0
         self._scan_cancel_requested = False
         self._active_batch_source: str | None = None
+        self._scanner_backend = "none"
 
         # Auto-save whenever folder or format changes
         self.folder_var.trace_add("write", self._on_setting_change)
@@ -796,10 +831,22 @@ class ScannerApp(tk.Tk):
 
         self.status_var.set(f"Update downloaded: {target_path.name}")
         self.dialog_status_var.set(f"Installer downloaded: {target_path}")
-        messagebox.showinfo(
-            "Download Complete",
-            f"Installer downloaded to:\n{target_path}",
+        should_install = messagebox.askyesno(
+            "Update Downloaded",
+            f"The update installer was downloaded to:\n{target_path}\n\n"
+            "Install it now? The scanner program will close.",
         )
+        if not should_install:
+            return
+
+        try:
+            subprocess.Popen([str(target_path)])
+        except OSError as exc:
+            self.status_var.set("Unable to start update installer.")
+            messagebox.showerror("Update Installer", f"Could not start the installer.\n\n{exc}")
+            return
+
+        self.destroy()
 
     def setup_style(self) -> None:
         style = ttk.Style(self)
@@ -2137,6 +2184,10 @@ class ScannerApp(tk.Tk):
             self.status_var.set("A scan is already in progress.")
             return
 
+        if self._scanner_backend == "epson_scan_2":
+            self._launch_epson_scan_2()
+            return
+
         if win32com is None or pythoncom is None or Image is None or ImageTk is None:
             messagebox.showerror(
                 "Missing packages",
@@ -2161,6 +2212,7 @@ class ScannerApp(tk.Tk):
         scanners = get_connected_scanners()
         if scanners:
             first = scanners[0]
+            self._scanner_backend = first["backend"]
             display = [
                 f"{s['name']} [{s['connection']}]"
                 + (" [ADF]" if s["adf_supported"] else "")
@@ -2186,6 +2238,7 @@ class ScannerApp(tk.Tk):
             self.dialog_status_var.set("Scanner ready. Click Scan Document to open the scan dialog.")
             self.update_dialog_stage("ready")
         else:
+            self._scanner_backend = "none"
             self.scanner_var.set("No scanner detected")
             self.model_var.set("N/A")
             self.connection_var.set("N/A")
@@ -2198,6 +2251,36 @@ class ScannerApp(tk.Tk):
             self.dialog_status_var.set("No scanner detected. Connect scanner and click Refresh.")
             self.dialog_step_var.set("Step 1 of 4: Scanner required")
             self.dialog_next_var.set("Next action: Connect scanner, then click Refresh.")
+
+    def _launch_epson_scan_2(self) -> None:
+        launcher = get_epson_scan_2_launcher()
+        if launcher is None:
+            self._scanner_backend = "none"
+            self.detect_scanner()
+            messagebox.showerror(
+                "Epson Scan 2 Not Found",
+                "Epson Scan 2 is no longer installed. Reinstall it, then click Refresh.",
+            )
+            return
+
+        try:
+            subprocess.Popen([str(launcher)], cwd=str(launcher.parent))
+        except OSError as exc:
+            messagebox.showerror("Epson Scan 2", f"Could not open Epson Scan 2.\n\n{exc}")
+            return
+
+        self.ready_var.set("Ready")
+        self.status_var.set("Epson Scan 2 opened for scanning.")
+        self.preview_status_var.set("Use Epson Scan 2 to preview and scan.")
+        self.dialog_status_var.set("Epson Scan 2 opened. Complete the scan there.")
+        self.dialog_step_var.set("Step 2 of 4: Epson Scan 2 opened")
+        self.dialog_next_var.set("Next action: Scan and save from Epson Scan 2.")
+        messagebox.showinfo(
+            "Epson Scan 2 Opened",
+            "Epson Scan 2 was opened because this scanner is not available through Windows WIA.\n\n"
+            "Complete the scan and choose the file name and folder in Epson Scan 2. "
+            "The settings in this window apply only to WIA-compatible scanners.",
+        )
 
     def cleanup_old_files(self) -> None:
         folder = Path(self.folder_var.get())
@@ -2268,6 +2351,10 @@ class ScannerApp(tk.Tk):
         if self.is_scanning:
             self.status_var.set("A scan is already in progress.")
             self.dialog_status_var.set("A scan is already in progress.")
+            return
+
+        if self._scanner_backend == "epson_scan_2":
+            self._launch_epson_scan_2()
             return
 
         if win32com is None or pythoncom is None or Image is None:
