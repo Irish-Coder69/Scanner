@@ -2327,7 +2327,15 @@ class ScannerApp(tk.Tk):
         self.destroy()
 
     def browse_folder(self):
-        selected = filedialog.askdirectory(initialdir=self.folder_var.get() or str(Path.home()))
+        current = self.folder_var.get().strip()
+        start_dir = Path(current) if current else Path.home()
+        # Walk up to the nearest existing ancestor so the dialog still opens
+        # near the configured folder even if it was moved/deleted/unmounted.
+        while not start_dir.exists() and start_dir.parent != start_dir:
+            start_dir = start_dir.parent
+        if not start_dir.exists():
+            start_dir = Path.home()
+        selected = filedialog.askdirectory(initialdir=str(start_dir))
         if selected:
             self.folder_var.set(selected)  # trace fires → save_settings() called automatically
 
