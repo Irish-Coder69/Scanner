@@ -1613,6 +1613,7 @@ class ScannerApp(tk.Tk):
 
                 if saved_paths:
                     self.filename_var.set("")
+                    self.pages_var.set("1")
                     self.status_var.set(f"ADF emptied after {scanned_pages} page(s). Saved scanned pages.")
                     self.dialog_status_var.set(f"ADF emptied. Saved {scanned_pages} page(s) successfully.")
                     self.update_dialog_stage("saved")
@@ -1702,6 +1703,7 @@ class ScannerApp(tk.Tk):
 
             if len(saved_paths) == total_pages:
                 self.filename_var.set("")
+                self.pages_var.set("1")
                 if total_pages == 1:
                     self.status_var.set(f"Saved successfully: {saved_paths[0]}")
                     self.dialog_status_var.set(f"Scan saved successfully: {saved_paths[0].name}")
@@ -2030,9 +2032,16 @@ class ScannerApp(tk.Tk):
             self.status_var.set("Saving PDF...")
             self.dialog_status_var.set(f"Saving PDF: {final_path.name}")
             self.update_idletasks()
-            pages[0].save(final_path, save_all=True, append_images=pages[1:])
+            dpi_value = self.get_selected_dpi()
+            pages[0].save(
+                final_path,
+                save_all=True,
+                append_images=pages[1:],
+                resolution=float(dpi_value),
+            )
             self._complete_progress()
             self.filename_var.set("")
+            self.pages_var.set("1")
             self.status_var.set(f"Saved successfully: {final_path}")
             self.dialog_status_var.set(f"PDF saved successfully: {final_path.name} ({len(pages)} page(s))")
             self.update_dialog_stage("saved")
